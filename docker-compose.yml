@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  stock-bot:
+    build: .
+    container_name: stock_signal_bot
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./bot.log:/app/bot.log
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
