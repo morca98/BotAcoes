@@ -59,7 +59,7 @@ class StockSignalBot:
     async def run_market_scan(self):
         logger.info("Starting market scan...")
         signals = []
-        for ticker in self.config.WATCHLIST:
+        for ticker in self.config.ASSETS:
             try:
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, self.scanner.analyze, ticker
@@ -72,7 +72,7 @@ class StockSignalBot:
                 logger.error(f"Error analyzing {ticker}: {e}")
 
         await self.notifier.send_scan_report(
-            total=len(self.config.WATCHLIST),
+            total=len(self.config.ASSETS),
             signals=len(signals),
             tickers=signals
         )
@@ -102,8 +102,8 @@ class StockSignalBot:
             f"📊 *Status do Bot*\n\n"
             f"🟢 Online: {now}\n"
             f"💰 Capital: €{self.config.CAPITAL:,.2f}\n"
-            f"⚙️ Risco/trade: {self.config.RISK_PCT*100:.0f}%\n"
-            f"📋 Ativos: {len(self.config.WATCHLIST)}\n"
+            f"⚙️ Risco/trade: {self.config.RISK_PERCENT:.1f}%\n"
+            f"📋 Ativos: {len(self.config.ASSETS)}\n"
             f"🔄 Scan: cada 4 horas\n"
             f"📈 Sinais hoje: {len(self.trade_log)}"
         )
