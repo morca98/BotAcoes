@@ -44,6 +44,9 @@ class StockSignalBot:
         self.app.add_handler(CommandHandler("trades", self.cmd_trades))
         self.app.add_handler(CommandHandler("scan", self.cmd_scan))
         self.app.add_handler(CommandHandler("capital", self.cmd_capital))
+        self.app.add_handler(CommandHandler("add", self.cmd_add_asset))
+        self.app.add_handler(CommandHandler("remove", self.cmd_remove_asset))
+        self.app.add_handler(CommandHandler("list", self.cmd_list_assets))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
 
     def setup_scheduler(self):
@@ -92,6 +95,9 @@ class StockSignalBot:
             "/scan — Iniciar scan manual\n"
             "/trades — Últimos sinais\n"
             "/capital — Ver/alterar capital\n"
+            "/add — Adicionar ativo\n"
+            "/remove — Remover ativo\n"
+            "/list — Listar ativos\n"
             "/help — Ajuda completa"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
@@ -140,6 +146,47 @@ class StockSignalBot:
                 await update.message.reply_text("❌ Uso: /capital 10000")
         else:
             await update.message.reply_text(f"💰 Capital: €{self.config.CAPITAL:,.2f}")
+
+    async def cmd_add_asset(self, update, context):
+        args = context.args
+        if not args:
+            await update.message.reply_text("❌ Uso: /add TICKER (ex: /add AAPL)")
+            return
+        
+        ticker = args[0].upper()
+        if self.config.assets_manager.add_asset(ticker):
+            await update.message.reply_text(f"✅ Ativo *{ticker}* adicionado com sucesso!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text(f"⚠️ Ativo *{ticker}* já existe ou erro ao adicionar.", parse_mode="Markdown")
+
+    async def cmd_remove_asset(self, update, context):
+        args = context.args
+        if not args:
+            await update.message.reply_text("❌ Uso: /remove TICKER (ex: /remove AAPL)")
+            return
+        
+        ticker = args[0].upper()
+        if self.config.assets_manager.remove_asset(ticker):
+            await update.message.reply_text(f"✅ Ativo *{ticker}* removido com sucesso!", parse_mode="Markdown")
+        else:
+            await update.message.reply_text(f"⚠️ Ativo *{ticker}* não encontrado.", parse_mode="Markdown")
+
+    async def cmd_list_assets(self, update, context):
+        assets = self.config.ASSETS
+        if not assets:
+            await update.message.reply_text("📋 A lista de ativos está vazia.")
+            return
+        
+        # Dividir em blocos se a lista for muito grande
+        msg = "📋 *Ativos Ativos:*\n\n"
+        msg += ", ".join(sorted(assets))
+        
+        if len(msg) > 4000:
+            # Enviar em partes se exceder o limite do Telegram
+            for i in range(0, len(msg), 4000):
+                await update.message.reply_text(msg[i:i+4000], parse_mode="Markdown")
+        else:
+            await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def cmd_help(self, update, context):
         msg = (

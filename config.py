@@ -37,8 +37,8 @@ class Config:
         "candle_confirmation": 15,
     }
 
-    # Assets: 143 assets across USA, Portugal, Europe, Brazil
-    ASSETS = [
+    # Assets: Loaded dynamically via AssetsManager
+    _DEFAULT_ASSETS = [
         # === USA - S&P 500 Large Caps ===
         "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B",
         "JPM", "V", "UNH", "XOM", "LLY", "JNJ", "MA", "PG", "AVGO", "HD",
@@ -70,6 +70,14 @@ class Config:
         # === Global Crypto ETFs & Commodities ===
         "BITO", "GDX", "GDXJ", "USO", "UNG",
     ]
+
+    def __init__(self):
+        from assets_manager import AssetsManager
+        self.assets_manager = AssetsManager(default_assets=self._DEFAULT_ASSETS)
+
+    @property
+    def ASSETS(self):
+        return self.assets_manager.get_assets()
 
     @property
     def risk_amount(self) -> float:
