@@ -1,0 +1,10 @@
+python-dotenv
+python-telegram-bot
+apscheduler
+pytz
+yfinance
+pandas
+numpy
+ta-lib
+flask
+requests
