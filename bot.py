@@ -1,6 +1,6 @@
 """
 Stock Signal Bot - MTF V3
-Multi-Timeframe Technical Analysis Trading Bot
+Multi-Timeframe Technical Analysis Trading Bot AI
 """
 
 import asyncio
