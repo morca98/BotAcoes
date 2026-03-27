@@ -151,8 +151,8 @@ class StockSignalBot:
             "4️⃣ Divergência Bullish MACD 4H\n"
             "5️⃣ Vela 4H com HH + HL\n\n"
             "*Gestão de Risco:*\n"
-            "• R:R 1:3 | Risco 1%/trade\n"
-            "• Breakeven a +1% | Trailing a +2%\n\n"
+            "• R:R 1:3 | Risco 1% trade\n"
+    
             "/start /status /scan /trades /capital"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
