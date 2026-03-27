@@ -86,7 +86,7 @@ class Notifier:
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏰ Iniciado: {now}\n"
             f"🔄 Scan: cada 4 horas\n"
-            f"📊 Ativos: 143 | Risco: 1%/trade\n"
+            f"📊 Ativos: *{total}*| Risco: 1% trade\n"
             f"🎯 5 filtros MTF ativos\n\n"
             f"_Bot pronto para operar._"
         )
