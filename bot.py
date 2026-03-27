@@ -30,13 +30,24 @@ LISBON_TZ = pytz.timezone("Europe/Lisbon")
 
 class StockSignalBot:
     def __init__(self):
-        self.config = Config()
-        self.scanner = MarketScanner(self.config)
-        self.risk_manager = RiskManager(self.config)
-        self.notifier = Notifier(self.config)
-        self.app = Application.builder().token(self.config.TELEGRAM_TOKEN).build()
-        self.scheduler = AsyncIOScheduler(timezone=LISBON_TZ)
-        self.trade_log = []
+        try:
+            self.config = Config()
+            logger.info("Config loaded successfully")
+            self.scanner = MarketScanner(self.config)
+            self.risk_manager = RiskManager(self.config)
+            self.notifier = Notifier(self.config)
+            
+            if not self.config.TELEGRAM_TOKEN:
+                logger.error("TELEGRAM_TOKEN not found in environment variables!")
+                raise ValueError("TELEGRAM_TOKEN is missing")
+                
+            self.app = Application.builder().token(self.config.TELEGRAM_TOKEN).build()
+            self.scheduler = AsyncIOScheduler(timezone=LISBON_TZ)
+            self.trade_log = []
+            logger.info("Bot components initialized successfully")
+        except Exception as e:
+            logger.error(f"Critical error during bot initialization: {e}")
+            raise e
 
     def setup_handlers(self):
         self.app.add_handler(CommandHandler("start", self.cmd_start))
