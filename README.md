@@ -24,8 +24,7 @@ Só gera sinal quando **todos os 5 filtros** estão satisfeitos.
 |-----------|-------|
 | Risco por trade | 1% do capital |
 | Rácio R:R | 1:3 |
-| Breakeven | Move SL para entrada a +1% |
-| Trailing Stop | Ativa a +2% |
+
 
 ---
 
