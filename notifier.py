@@ -81,12 +81,13 @@ class Notifier:
 
     async def send_status_online(self):
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
+        total_assets = len(self.config.ASSETS)
         msg = (
             f"🟢 *Stock Signal Bot MTF V3 — Online*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏰ Iniciado: {now}\n"
             f"🔄 Scan: cada 4 horas\n"
-            f"📊 Ativos: *{total}*| Risco: 1% trade\n"
+            f"📊 Ativos: {total_assets} | Risco: 1%/trade\n"
             f"🎯 5 filtros MTF ativos\n\n"
             f"_Bot pronto para operar._"
         )
