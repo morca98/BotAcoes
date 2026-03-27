@@ -21,8 +21,8 @@ class Config:
 
     # Strategy Filters
     RSI_WEEKLY_MAX: float = 50.0     # Weekly RSI < 50
-    SMA_DAILY_PERIOD: int = 70       # Price > SMA70 daily
-    RSI_4H_OVERSOLD: float = 40.0    # 4H RSI < 40 (pullback)
+    SMA_PERIOD: int = 70             # Price > SMA70 daily
+    RSI_4H_MAX: float = 40.0         # 4H RSI < 40 (pullback)
     MACD_FAST: int = 12
     MACD_SLOW: int = 26
     MACD_SIGNAL: int = 9
