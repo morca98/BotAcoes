@@ -34,8 +34,7 @@ class Notifier:
             f"🎯 *Take Profit:* `{s['tp']}` (+{abs(s['tp']-s['price'])/s['price']*100:.1f}%)\n"
             f"⚖️ *R:R:* 1:{s['rr']:.0f}\n\n"
             f"📐 *Gestão:*\n"
-            f"  • Breakeven a: `{s['breakeven_price']}`\n"
-            f"  • Trailing a:  `{s['trailing_price']}`\n"
+
             f"  • Tamanho:     `{s['size']} unid.`\n"
             f"  • Risco:       `€{s['risk_eur']}`\n\n"
             f"📊 *Indicadores:*\n"

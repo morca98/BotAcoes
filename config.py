@@ -17,8 +17,7 @@ class Config:
     CAPITAL: float = float(os.getenv("CAPITAL", "10000"))
     RISK_PERCENT: float = float(os.getenv("RISK_PERCENT", "1.0"))  # 1% per trade
     RR_RATIO: float = 3.0        # Risk:Reward 1:3
-    BREAKEVEN_PCT: float = 0.01  # Move SL to entry at +1%
-    TRAILING_PCT: float = 0.02   # Activate trailing stop at +2%
+
 
     # Strategy Filters
     RSI_WEEKLY_MAX: float = 50.0     # Weekly RSI < 50

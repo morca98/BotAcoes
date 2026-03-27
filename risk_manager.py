@@ -16,7 +16,7 @@ class RiskManager:
         sl = min(sl, entry * 0.99)
         risk_per_unit = max(entry - sl, entry * 0.005)
         tp = entry + risk_per_unit * self.config.RR_RATIO
-        risk_eur = capital * self.config.RISK_PCT
+        risk_eur = capital * self.config.RISK_PERCENT / 100
         size = risk_eur / risk_per_unit
 
         signal.update({
@@ -24,17 +24,6 @@ class RiskManager:
             "tp": round(tp, 4),
             "size": round(size, 2),
             "risk_eur": round(risk_eur, 2),
-            "rr": self.config.RR_RATIO,
-            "breakeven_price": round(entry * (1 + self.config.BREAKEVEN_PCT), 4),
-            "trailing_price":  round(entry * (1 + self.config.TRAILING_PCT), 4),
+            "rr": self.config.RR_RATIO
         })
         return signal
-
-    def update_trailing(self, entry: float, current_price: float, sl: float) -> Dict[str, float]:
-        pct_gain = (current_price - entry) / entry
-        if pct_gain >= self.config.TRAILING_PCT:
-            new_sl = max(current_price * (1 - self.config.RISK_PCT), entry)
-            return {"sl": round(new_sl, 4), "mode": "trailing"}
-        elif pct_gain >= self.config.BREAKEVEN_PCT:
-            return {"sl": round(entry, 4), "mode": "breakeven"}
-        return {"sl": round(sl, 4), "mode": "original"}
