@@ -1,6 +1,5 @@
 """
-Stock Signal Bot - MTF V3
-Multi-Timeframe Technical Analysis Trading Bot AI
+Stock Signal Bot - Localizador de Pontos de Compra
 """
 
 import asyncio
@@ -14,7 +13,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from scanner import MarketScanner
-from risk_manager import RiskManager
 from notifier import Notifier
 from config import Config
 from health_server import start_health_server
@@ -34,11 +32,10 @@ class StockSignalBot:
             self.config = Config()
             logger.info("Config loaded successfully")
             self.scanner = MarketScanner(self.config)
-            self.risk_manager = RiskManager(self.config)
             self.notifier = Notifier(self.config)
             
             if not self.config.TELEGRAM_TOKEN:
-                logger.error("TELEGRAM_TOKEN not found in environment variables!")
+                logger.error("TELEGRAM_TOKEN not found in config!")
                 raise ValueError("TELEGRAM_TOKEN is missing")
                 
             self.app = Application.builder().token(self.config.TELEGRAM_TOKEN).build()
@@ -52,22 +49,15 @@ class StockSignalBot:
     def setup_handlers(self):
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
-        self.app.add_handler(CommandHandler("trades", self.cmd_trades))
         self.app.add_handler(CommandHandler("scan", self.cmd_scan))
-        self.app.add_handler(CommandHandler("capital", self.cmd_capital))
-        self.app.add_handler(CommandHandler("add", self.cmd_add_asset))
-        self.app.add_handler(CommandHandler("remove", self.cmd_remove_asset))
         self.app.add_handler(CommandHandler("list", self.cmd_list_assets))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
 
     def setup_scheduler(self):
+        # Scan a cada 4 horas
         self.scheduler.add_job(
             self.run_market_scan, "cron",
             hour="0,4,8,12,16,20", minute=0, id="market_scan"
-        )
-        self.scheduler.add_job(
-            self.send_daily_report, "cron",
-            hour=9, minute=0, id="daily_report"
         )
 
     async def run_market_scan(self):
@@ -75,13 +65,13 @@ class StockSignalBot:
         signals = []
         for ticker in self.config.ASSETS:
             try:
+                # Executar análise em thread separada para não bloquear o loop async
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, self.scanner.analyze, ticker
                 )
-                if result and result.get("signal"):
-                    result = self.risk_manager.calculate_levels(result, self.config.CAPITAL)
+                if result:
                     signals.append(result)
-                    await self.notifier.send_signal(result)
+                    # Opcional: enviar sinal individual ou agrupar no relatório final
             except Exception as e:
                 logger.error(f"Error analyzing {ticker}: {e}")
 
@@ -90,26 +80,19 @@ class StockSignalBot:
             signals=len(signals),
             tickers=signals
         )
+        self.trade_log.extend(signals)
         logger.info(f"Scan complete. {len(signals)} signals found.")
         return signals
 
-    async def send_daily_report(self):
-        today = datetime.now(LISBON_TZ).date().isoformat()
-        today_trades = [t for t in self.trade_log if t.get("date") == today]
-        await self.notifier.send_daily_report(today_trades, self.config.CAPITAL)
-
     async def cmd_start(self, update, context):
         msg = (
-            "🤖 *Stock Signal Bot MTF V3* está online!\n\n"
+            "🤖 *Bot de Ações (Pontos de Compra)* está online!\n\n"
+            "Este bot monitoriza o mercado em busca de ações que cumpram critérios rigorosos de volume, capitalização e indicadores técnicos.\n\n"
             "Comandos disponíveis:\n"
-            "/status — Estado do bot\n"
-            "/scan — Iniciar scan manual\n"
-            "/trades — Últimos sinais\n"
-            "/capital — Ver/alterar capital\n"
-            "/add — Adicionar ativo\n"
-            "/remove — Remover ativo\n"
-            "/list — Listar ativos\n"
-            "/help — Ajuda completa"
+            "/status — Estado do bot e filtros\n"
+            "/scan — Iniciar scan manual imediato\n"
+            "/list — Listar ativos monitorizados\n"
+            "/help — Ver critérios da estratégia"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -118,82 +101,23 @@ class StockSignalBot:
         msg = (
             f"📊 *Status do Bot*\n\n"
             f"🟢 Online: {now}\n"
-            f"💰 Capital: €{self.config.CAPITAL:,.2f}\n"
-            f"⚙️ Risco/trade: {self.config.RISK_PERCENT:.1f}%\n"
-            f"📋 Ativos: {len(self.config.ASSETS)}\n"
             f"🔄 Scan: cada 4 horas\n"
-            f"📈 Sinais hoje: {len(self.trade_log)}"
+            f"📋 Ativos monitorizados: {len(self.config.ASSETS)}\n"
+            f"📈 Sinais detetados hoje: {len([s for s in self.trade_log if datetime.now().date() == datetime.now().date()])}"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-    async def cmd_trades(self, update, context):
-        if not self.trade_log:
-            await update.message.reply_text("Nenhum sinal registado ainda.")
-            return
-        lines = ["📋 *Últimos Sinais*\n"]
-        for t in reversed(self.trade_log[-5:]):
-            lines.append(
-                f"• *{t['ticker']}* @ {t['price']:.2f} "
-                f"| SL: {t['sl']:.2f} | TP: {t['tp']:.2f} "
-                f"| Conf: {t['confidence']}%"
-            )
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
     async def cmd_scan(self, update, context):
-        await update.message.reply_text("🔍 A iniciar scan manual...")
+        await update.message.reply_text("🔍 A iniciar scan manual de ativos líquidas...")
         signals = await self.run_market_scan()
         await update.message.reply_text(
-            f"✅ Scan concluído. {len(signals)} sinal(is) encontrado(s)."
+            f"✅ Scan concluído. {len(signals)} ativos encontrados."
         )
-
-    async def cmd_capital(self, update, context):
-        args = context.args
-        if args:
-            try:
-                novo = float(args[0])
-                self.config.CAPITAL = novo
-                await update.message.reply_text(f"✅ Capital: €{novo:,.2f}")
-            except ValueError:
-                await update.message.reply_text("❌ Uso: /capital 10000")
-        else:
-            await update.message.reply_text(f"💰 Capital: €{self.config.CAPITAL:,.2f}")
-
-    async def cmd_add_asset(self, update, context):
-        args = context.args
-        if not args:
-            await update.message.reply_text("❌ Uso: /add TICKER (ex: /add AAPL)")
-            return
-        
-        ticker = args[0].upper()
-        if self.config.assets_manager.add_asset(ticker):
-            await update.message.reply_text(f"✅ Ativo *{ticker}* adicionado com sucesso!", parse_mode="Markdown")
-        else:
-            await update.message.reply_text(f"⚠️ Ativo *{ticker}* já existe ou erro ao adicionar.", parse_mode="Markdown")
-
-    async def cmd_remove_asset(self, update, context):
-        args = context.args
-        if not args:
-            await update.message.reply_text("❌ Uso: /remove TICKER (ex: /remove AAPL)")
-            return
-        
-        ticker = args[0].upper()
-        if self.config.assets_manager.remove_asset(ticker):
-            await update.message.reply_text(f"✅ Ativo *{ticker}* removido com sucesso!", parse_mode="Markdown")
-        else:
-            await update.message.reply_text(f"⚠️ Ativo *{ticker}* não encontrado.", parse_mode="Markdown")
 
     async def cmd_list_assets(self, update, context):
         assets = self.config.ASSETS
-        if not assets:
-            await update.message.reply_text("📋 A lista de ativos está vazia.")
-            return
-        
-        # Dividir em blocos se a lista for muito grande
-        msg = "📋 *Ativos Ativos:*\n\n"
-        msg += ", ".join(sorted(assets))
-        
+        msg = "📋 *Ativos Monitorizados:*\n\n" + ", ".join(sorted(assets))
         if len(msg) > 4000:
-            # Enviar em partes se exceder o limite do Telegram
             for i in range(0, len(msg), 4000):
                 await update.message.reply_text(msg[i:i+4000], parse_mode="Markdown")
         else:
@@ -201,27 +125,34 @@ class StockSignalBot:
 
     async def cmd_help(self, update, context):
         msg = (
-            "📖 *Stock Signal Bot MTF V3 — Ajuda*\n\n"
-            "*5 Filtros da Estratégia:*\n"
-            "1️⃣ RSI Semanal < 50\n"
-            "2️⃣ Preço > SMA70 Diário\n"
-            "3️⃣ RSI 4H < 40 (pullback)\n"
-            "4️⃣ Divergência Bullish MACD 4H\n"
-            "5️⃣ Vela 4H com HH + HL\n\n"
-            "*Gestão de Risco:*\n"
-            "• R:R 1:3 | Risco 1% trade\n"
-    
-            "/start /status /scan /trades /capital"
+            "📖 *Estratégia de Pontos de Compra*\n\n"
+            "*Filtros de Seleção:*\n"
+            "• Volume Médio > 1M ações/dia\n"
+            "• Volume Financeiro > $20M USD/dia\n"
+            "• Preço > $10 | Capitalização > $2B\n\n"
+            "*Filtros de Eliminação (Não mostra se):*\n"
+            "❌ RSI Diário > 70 (Sobrecomprado)\n"
+            "❌ RSI 4H > 60\n"
+            "❌ Afastamento EMA20 > 8% (Esticado)\n"
+            "❌ Preço < EMA200 (Tendência de Baixa)\n"
+            "❌ EMA20 < EMA70 ou EMA70 < EMA200\n"
+            "❌ ATR% < 2% (Baixa Volatilidade)"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def run(self):
-        start_health_server(port=8080)
+        # Health server para Docker/Render/Heroku
+        try:
+            start_health_server(port=8080)
+        except:
+            pass
+            
         self.setup_handlers()
         self.setup_scheduler()
         self.scheduler.start()
 
         async with self.app:
+            await self.app.initialize()
             await self.app.start()
             await self.notifier.send_status_online()
             await self.app.updater.start_polling()

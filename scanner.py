@@ -1,6 +1,5 @@
 """
-Scanner — Stock Signal Bot MTF V3
-5-filter Multi-Timeframe strategy implementation.
+Scanner de Ações - Pontos de Compra e Filtros Técnicos
 """
 
 import logging
@@ -21,60 +20,110 @@ class MarketScanner:
             data = self._fetch_data(ticker)
             if data is None:
                 return None
-            weekly, daily, h4 = data
+            daily, h4 = data
 
-            # Filter 1 — RSI Weekly < 50
-            rsi_w = self._rsi(weekly["Close"], self.config.RSI_PERIOD)
-            if rsi_w.iloc[-1] >= self.config.RSI_WEEKLY_MAX:
+            # 1. Volume médio > 1 milhão de ações/dia (últimos 30 dias)
+            avg_volume = daily["Volume"].iloc[-30:].mean()
+            if avg_volume < self.config.MIN_AVG_VOLUME:
                 return None
 
-            # Filter 2 — Price > SMA70 Daily
-            sma_d = daily["Close"].rolling(self.config.SMA_PERIOD).mean()
+            # 2. Preço > 10 USD
             current_price = daily["Close"].iloc[-1]
-            if current_price <= sma_d.iloc[-1]:
+            if current_price < self.config.MIN_PRICE:
                 return None
 
-            # Filter 3 — RSI 4H < 40
-            rsi_4h = self._rsi(h4["Close"], self.config.RSI_PERIOD)
-            if rsi_4h.iloc[-1] >= self.config.RSI_4H_MAX:
+            # 3. Volume em dólares > 20 milhões USD (Preço * Volume diário médio)
+            dollar_volume = current_price * avg_volume
+            if dollar_volume < self.config.MIN_DOLLAR_VOLUME:
                 return None
 
-            # Filter 4 — Bullish MACD Divergence on 4H
-            if not self._detect_bullish_divergence(h4):
+            # 4. Capitalização > 2 B USD
+            market_cap = self._get_market_cap(ticker)
+            if market_cap is not None and market_cap < self.config.MIN_MARKET_CAP:
                 return None
 
-            # Filter 5 — 4H HH + HL confirmation
-            if not self._confirm_hh_hl(h4):
+            # --- Cálculos de Indicadores Técnicos ---
+            # Médias Móveis Exponenciais (EMA)
+            ema20 = daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1]
+            ema70 = daily["Close"].ewm(span=70, adjust=False).mean().iloc[-1]
+            ema200 = daily["Close"].ewm(span=200, adjust=False).mean().iloc[-1]
+
+            # RSI Diário e 4H
+            rsi_daily = self._rsi(daily["Close"], 14).iloc[-1]
+            rsi_4h = self._rsi(h4["Close"], 14).iloc[-1]
+
+            # ATR% (Average True Range em percentagem do preço)
+            atr = self._atr(daily, 14).iloc[-1]
+            atr_pct = (atr / current_price) * 100
+
+            # --- Aplicação dos Filtros de Eliminação ---
+            # - Eliminar se RSI Diário > 70
+            if rsi_daily > self.config.RSI_DAILY_MAX:
                 return None
 
-            confidence = self._calculate_confidence(rsi_w.iloc[-1], rsi_4h.iloc[-1])
+            # - Eliminar se RSI 4h > 60
+            if rsi_4h > self.config.RSI_4H_MAX:
+                return None
+
+            # - Eliminar se EMA20 esticada a mais de 8% (Preço > EMA20 * 1.08)
+            # Ou seja, manter se a distância estiver entre a EMA20 e 8% acima. Se preço < EMA20 também pode ser ponto de compra (pullback),
+            # mas o utilizador especificou: "Eliminar se EMA20 < 8%" (significando afastar se estiver a mais de 8% acima da EMA20, ou seja, esticado).
+            # Vamos verificar a distância percentual: (current_price - ema20) / ema20 * 100
+            distance_ema20 = ((current_price - ema20) / ema20) * 100
+            if distance_ema20 > self.config.EMA20_MAX_DISTANCE_PCT:
+                return None
+
+            # - Eliminar se Preço < EMA200
+            if current_price < ema200:
+                return None
+
+            # - Eliminar se EMA20 < EMA70
+            if ema20 < ema70:
+                return None
+
+            # - Eliminar se EMA70 < EMA200
+            if ema70 < ema200:
+                return None
+
+            # - Eliminar se ATR% < 2%
+            if atr_pct < self.config.ATR_MIN_PCT:
+                return None
+
             return {
                 "ticker": ticker,
-                "signal": True,
-                "price": round(float(current_price), 4),
-                "rsi_weekly": round(float(rsi_w.iloc[-1]), 2),
-                "rsi_4h": round(float(rsi_4h.iloc[-1]), 2),
-                "sma70": round(float(sma_d.iloc[-1]), 4),
-                "confidence": confidence,
-                "h4_low": round(float(h4["Low"].iloc[-5:].min()), 4),
-                "h4_high": round(float(h4["High"].iloc[-1]), 4),
+                "price": round(float(current_price), 2),
+                "rsi_daily": round(float(rsi_daily), 2),
+                "rsi_4h": round(float(rsi_4h), 2),
+                "ema20": round(float(ema20), 2),
+                "ema70": round(float(ema70), 2),
+                "ema200": round(float(ema200), 2),
+                "atr_pct": round(float(atr_pct), 2),
+                "dollar_volume": round(float(dollar_volume / 1e6), 2), # em milhões
+                "market_cap": round(float(market_cap / 1e9), 2) if market_cap else 0, # em bilhões
             }
+
         except Exception as e:
-            logger.error(f"[{ticker}] Error: {e}")
+            logger.error(f"[{ticker}] Erro no scanner: {e}")
             return None
 
     def _fetch_data(self, ticker: str):
         try:
             tk = yf.Ticker(ticker)
-            weekly = tk.history(period="2y", interval="1wk")
-            daily  = tk.history(period="6mo", interval="1d")
-            h4     = tk.history(period="60d", interval="4h")
-            for df in [weekly, daily, h4]:
-                if df is None or len(df) < 30:
-                    return None
-            return weekly, daily, h4
+            daily = tk.history(period="1y", interval="1d")
+            h4 = tk.history(period="60d", interval="60m") # yfinance 4h pode usar 60m agrupado ou 1h
+            if daily is None or len(daily) < 200 or h4 is None or len(h4) < 30:
+                return None
+            return daily, h4
         except Exception as e:
-            logger.warning(f"[{ticker}] Fetch failed: {e}")
+            logger.warning(f"[{ticker}] Falha ao descarregar dados: {e}")
+            return None
+
+    def _get_market_cap(self, ticker: str) -> Optional[float]:
+        try:
+            tk = yf.Ticker(ticker)
+            info = tk.info
+            return info.get("marketCap", None)
+        except Exception:
             return None
 
     @staticmethod
@@ -88,47 +137,12 @@ class MarketScanner:
         return 100 - (100 / (1 + rs))
 
     @staticmethod
-    def _macd(series: pd.Series, fast=12, slow=26, signal=9):
-        ema_fast = series.ewm(span=fast, adjust=False).mean()
-        ema_slow = series.ewm(span=slow, adjust=False).mean()
-        macd_line = ema_fast - ema_slow
-        signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-        return macd_line, signal_line, macd_line - signal_line
-
-    def _detect_bullish_divergence(self, h4: pd.DataFrame, lookback: int = 20) -> bool:
-        try:
-            lows = h4["Low"].iloc[-lookback:]
-            macd_line, _, _ = self._macd(
-                h4["Close"],
-                self.config.MACD_FAST,
-                self.config.MACD_SLOW,
-                self.config.MACD_SIGNAL
-            )
-            macd_w = macd_line.iloc[-lookback:]
-            price_mins = self._local_minima(lows.values)
-            macd_mins  = self._local_minima(macd_w.values)
-            if len(price_mins) < 2 or len(macd_mins) < 2:
-                return False
-            price_ll = lows.iloc[price_mins[-1]] < lows.iloc[price_mins[-2]]
-            macd_hl  = macd_w.iloc[macd_mins[-1]] > macd_w.iloc[macd_mins[-2]]
-            return bool(price_ll and macd_hl)
-        except Exception:
-            return False
-
-    def _confirm_hh_hl(self, h4: pd.DataFrame) -> bool:
-        try:
-            last, prev = h4.iloc[-1], h4.iloc[-2]
-            return bool(last["High"] > prev["High"] and last["Low"] > prev["Low"])
-        except Exception:
-            return False
-
-    @staticmethod
-    def _local_minima(arr: np.ndarray) -> list:
-        return [i for i in range(1, len(arr) - 1)
-                if arr[i] < arr[i - 1] and arr[i] < arr[i + 1]]
-
-    def _calculate_confidence(self, rsi_weekly: float, rsi_4h: float) -> int:
-        score = 60
-        score += max(0, (self.config.RSI_WEEKLY_MAX - rsi_weekly) / self.config.RSI_WEEKLY_MAX * 20)
-        score += max(0, (self.config.RSI_4H_MAX - rsi_4h) / self.config.RSI_4H_MAX * 20)
-        return min(100, round(score))
+    def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+        high = df["High"]
+        low = df["Low"]
+        close = df["Close"]
+        tr1 = high - low
+        tr2 = (high - close.shift()).abs()
+        tr3 = (low - close.shift()).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return tr.rolling(period).mean()

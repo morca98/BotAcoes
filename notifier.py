@@ -1,4 +1,4 @@
-"""Notifier — Stock Signal Bot MTF V3"""
+"""Notifier — Stock Signal Bot"""
 
 import logging
 from datetime import datetime
@@ -22,78 +22,41 @@ class Notifier:
         except Exception as e:
             logger.error(f"Telegram error: {e}")
 
-    async def send_signal(self, s: dict):
-        now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
-        bar = self._bar(s["confidence"])
-        msg = (
-            f"🚀 *SINAL DE COMPRA — {s['ticker']}*\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📅 {now}\n\n"
-            f"💵 *Entrada:* `{s['price']}`\n"
-            f"🛡 *Stop Loss:* `{s['sl']}` (-{abs(s['price']-s['sl'])/s['price']*100:.1f}%)\n"
-            f"🎯 *Take Profit:* `{s['tp']}` (+{abs(s['tp']-s['price'])/s['price']*100:.1f}%)\n"
-            f"⚖️ *R:R:* 1:{s['rr']:.0f}\n\n"
-            f"📐 *Gestão:*\n"
-
-            f"  • Tamanho:     `{s['size']} unid.`\n"
-            f"  • Risco:       `€{s['risk_eur']}`\n\n"
-            f"📊 *Indicadores:*\n"
-            f"  • RSI Semanal: `{s['rsi_weekly']}` < 50 ✅\n"
-            f"  • RSI 4H:      `{s['rsi_4h']}` < 40 ✅\n"
-            f"  • SMA70:       `{s['sma70']}` ✅\n"
-            f"  • Div. MACD:   Bullish ✅\n"
-            f"  • HH+HL:       Confirmado ✅\n\n"
-            f"🔥 *Confiança:* {s['confidence']}% {bar}"
-        )
-        await self._send(msg)
-
     async def send_scan_report(self, total: int, signals: int, tickers: list):
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
-        extra = ""
-        if tickers:
-            extra = "\n\n📋 *Sinais:*\n" + "\n".join(
-                f"  • {t['ticker']} @ {t['price']} (conf: {t['confidence']}%)"
-                for t in tickers
-            )
         msg = (
-            f"🔍 *Relatório de Scan* — {now}\n"
+            f"🎯 *RELATÓRIO DE PONTOS DE COMPRA* — {now}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 Ativos analisados: *{total}*\n"
-            f"🎯 Sinais encontrados: *{signals}*\n"
-            f"🔄 Próximo scan: em *4 horas*{extra}"
+            f"🚀 Oportunidades encontradas: *{signals}*\n"
         )
-        await self._send(msg)
-
-    async def send_daily_report(self, trades: list, capital: float):
-        now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y")
-        msg = (
-            f"📈 *Relatório Diário — {now}*\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 Capital: `€{capital:,.2f}`\n"
-            f"📋 Sinais hoje: `{len(trades)}`\n"
-        )
-        if trades:
-            msg += "\n*Trades do dia:*\n"
-            for t in trades:
-                msg += f"  • {t.get('ticker','?')} @ {t.get('price','?')}\n"
-        msg += "\n✅ Bot operacional — bom trading! 🎯"
+        if tickers:
+            msg += "\n📋 *Ações perto de ponto de compra:*\n"
+            for t in tickers:
+                msg += (
+                    f"\n🔹 *{t['ticker']}* @ `${t['price']}`\n"
+                    f"  • RSI Diário: `{t['rsi_daily']}` (≤70)\n"
+                    f"  • RSI 4H: `{t['rsi_4h']}` (≤60)\n"
+                    f"  • EMA20: `{t['ema20']}` | EMA70: `{t['ema70']}` | EMA200: `{t['ema200']}`\n"
+                    f"  • ATR%: `{t['atr_pct']}%` (≥2%)\n"
+                    f"  • Vol. Dólar: `$ {t['dollar_volume']}M` | M.Cap: `$ {t['market_cap']}B`\n"
+                )
+        else:
+            msg += "\nNenhuma ação cumpriu rigorosamente todos os filtros técnicos e de volume nesta ronda."
+        
         await self._send(msg)
 
     async def send_status_online(self):
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
-        total_assets = len(self.config.ASSETS)
         msg = (
-            f"🟢 *Stock Signal Bot MTF V3 — Online*\n"
+            f"🟢 *Bot de Ações (Pontos de Compra) — Online*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏰ Iniciado: {now}\n"
-            f"🔄 Scan: cada 4 horas\n"
-            f"📊 Ativos: {total_assets} | Risco: 1%/trade\n"
-            f"🎯 5 filtros MTF ativos\n\n"
-            f"_Bot pronto para operar._"
+            f"🔄 Filtros Ativos:\n"
+            f"  • Volume médio > 1M | Vol. USD > $20M\n"
+            f"  • Preço > $10 | M.Cap > $2B\n"
+            f"  • RSI Diário < 70 | RSI 4H < 60\n"
+            f"  • Tendência: Preço > EMA200 > EMA70 > EMA20\n"
+            f"  • Afastamento EMA20 < 8% | ATR% > 2%\n"
         )
         await self._send(msg)
-
-    @staticmethod
-    def _bar(confidence: int) -> str:
-        f = round(confidence / 10)
-        return "█" * f + "░" * (10 - f)
