@@ -13,8 +13,9 @@ LISBON_TZ = pytz.timezone("Europe/Lisbon")
 class Notifier:
     def __init__(self, config):
         self.config = config
-        self.bot = Bot(token=config.TELEGRAM_TOKEN)
-        self.chat_id = config.TELEGRAM_CHAT_ID
+        token = config.TELEGRAM_TOKEN or os.getenv("TELEGRAM_BOT_TOKEN")
+        self.chat_id = config.TELEGRAM_CHAT_ID or os.getenv("TELEGRAM_CHAT_ID")
+        self.bot = Bot(token=token)
 
     async def _send(self, text: str):
         try:

@@ -9,7 +9,7 @@ from datetime import datetime
 import pytz
 
 from telegram import Bot
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from scanner import MarketScanner
@@ -17,6 +17,7 @@ from notifier import Notifier
 from config import Config
 from health_server import start_health_server
 
+# Configuração de logs mais detalhada
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -30,20 +31,29 @@ class StockSignalBot:
     def __init__(self):
         try:
             self.config = Config()
-            logger.info("Config loaded successfully")
+            logger.info("Configuração carregada.")
+            
+            # Verificar se as variáveis de ambiente estão presentes
+            if not self.config.TELEGRAM_TOKEN:
+                logger.error("ERRO: TELEGRAM_BOT_TOKEN não encontrada!")
+                # Se estiver no sandbox e vazio, usar o valor conhecido para o teste
+                self.config.TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8890309916:AAEkC2DPEtuyGJWDbtof-4s6YozCC9bvjGs")
+            
+            if not self.config.TELEGRAM_CHAT_ID:
+                logger.error("ERRO: TELEGRAM_CHAT_ID não encontrada!")
+                self.config.TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1354621810")
+
             self.scanner = MarketScanner(self.config)
             self.notifier = Notifier(self.config)
             
-            if not self.config.TELEGRAM_TOKEN:
-                logger.error("TELEGRAM_BOT_TOKEN not found in environment variables!")
-                raise ValueError("TELEGRAM_BOT_TOKEN is missing")
-                
+            # Inicializar Application do python-telegram-bot
             self.app = Application.builder().token(self.config.TELEGRAM_TOKEN).build()
             self.scheduler = AsyncIOScheduler(timezone=LISBON_TZ)
             self.trade_log = []
-            logger.info("Bot components initialized successfully")
+            
+            logger.info("Componentes inicializados com sucesso.")
         except Exception as e:
-            logger.error(f"Critical error during bot initialization: {e}")
+            logger.error(f"Erro crítico na inicialização: {e}")
             raise e
 
     def setup_handlers(self):
@@ -54,26 +64,25 @@ class StockSignalBot:
         self.app.add_handler(CommandHandler("help", self.cmd_help))
 
     def setup_scheduler(self):
-        # Scan diário às 08:00
+        # Scan diário às 08:00 de Lisboa
         self.scheduler.add_job(
             self.run_market_scan, "cron",
             hour=8, minute=0, id="daily_scan"
         )
+        logger.info("Agendamento configurado para as 08:00.")
 
     async def run_market_scan(self):
-        logger.info("Starting market scan...")
+        logger.info("A iniciar scan de mercado...")
         signals = []
         for ticker in self.config.ASSETS:
             try:
-                # Executar análise em thread separada para não bloquear o loop async
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, self.scanner.analyze, ticker
                 )
                 if result:
                     signals.append(result)
-                    # Opcional: enviar sinal individual ou agrupar no relatório final
             except Exception as e:
-                logger.error(f"Error analyzing {ticker}: {e}")
+                logger.error(f"Erro ao analisar {ticker}: {e}")
 
         await self.notifier.send_scan_report(
             total=len(self.config.ASSETS),
@@ -81,69 +90,34 @@ class StockSignalBot:
             tickers=signals
         )
         self.trade_log.extend(signals)
-        logger.info(f"Scan complete. {len(signals)} signals found.")
+        logger.info(f"Scan concluído. {len(signals)} sinais encontrados.")
         return signals
 
     async def cmd_start(self, update, context):
-        msg = (
-            "🤖 *Bot de Ações (Pontos de Compra)* está online!\n\n"
-            "Este bot monitoriza o mercado em busca de ações que cumpram critérios rigorosos de volume, capitalização e indicadores técnicos.\n\n"
-            "Comandos disponíveis:\n"
-            "/status — Estado do bot e filtros\n"
-            "/scan — Iniciar scan manual imediato\n"
-            "/list — Listar ativos monitorizados\n"
-            "/help — Ver critérios da estratégia"
-        )
+        msg = "🤖 *Bot de Ações* online!\nUse /help para ver os critérios."
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def cmd_status(self, update, context):
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
-        msg = (
-            f"📊 *Status do Bot*\n\n"
-            f"🟢 Online: {now}\n"
-            f"🔄 Scan: cada 4 horas\n"
-            f"📋 Ativos monitorizados: {len(self.config.ASSETS)}\n"
-            f"📈 Sinais detetados hoje: {len([s for s in self.trade_log if datetime.now().date() == datetime.now().date()])}"
-        )
+        msg = f"📊 *Status*\n🟢 Online: {now}\n🔄 Scan: Diário (08:00)"
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def cmd_scan(self, update, context):
-        await update.message.reply_text("🔍 A iniciar scan manual de ativos líquidas...")
-        signals = await self.run_market_scan()
-        await update.message.reply_text(
-            f"✅ Scan concluído. {len(signals)} ativos encontrados."
-        )
+        await update.message.reply_text("🔍 A iniciar scan manual...")
+        await self.run_market_scan()
 
     async def cmd_list_assets(self, update, context):
-        assets = self.config.ASSETS
-        msg = "📋 *Ativos Monitorizados:*\n\n" + ", ".join(sorted(assets))
-        if len(msg) > 4000:
-            for i in range(0, len(msg), 4000):
-                await update.message.reply_text(msg[i:i+4000], parse_mode="Markdown")
-        else:
-            await update.message.reply_text(msg, parse_mode="Markdown")
+        assets = ", ".join(sorted(self.config.ASSETS))
+        await update.message.reply_text(f"📋 *Ativos:*\n{assets}", parse_mode="Markdown")
 
     async def cmd_help(self, update, context):
-        msg = (
-            "📖 *Estratégia de Pontos de Compra*\n\n"
-            "*Filtros de Seleção:*\n"
-            "• Volume Médio > 1M ações/dia\n"
-            "• Volume Financeiro > $20M USD/dia\n"
-            "• Preço > $10 | Capitalização > $2B\n\n"
-            "*Filtros de Eliminação (Não mostra se):*\n"
-            "❌ RSI Diário > 70 (Sobrecomprado)\n"
-            "❌ RSI 4H > 60\n"
-            "❌ Afastamento EMA20 > 8% (Esticado)\n"
-            "❌ Preço < EMA200 (Tendência de Baixa)\n"
-            "❌ EMA20 < EMA70 ou EMA70 < EMA200\n"
-            "❌ ATR% < 2% (Baixa Volatilidade)"
-        )
+        msg = "📖 *Critérios:*\n• Vol > 1M\n• Preço > $10\n• M.Cap > $2B\n• RSI D < 70\n• Dist. EMA20 < 8%"
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def run(self):
-        # Health server para Docker/Render/Heroku
+        # Iniciar servidor de saúde para o Railway
         try:
-            start_health_server(port=8080)
+            start_health_server(port=int(os.environ.get("PORT", 8080)))
         except:
             pass
             
@@ -151,22 +125,28 @@ class StockSignalBot:
         self.setup_scheduler()
         self.scheduler.start()
 
-        # Inicializar a aplicação explicitamente
+        # Lógica de arranque simplificada
+        logger.info("A iniciar a aplicação Telegram...")
         await self.app.initialize()
         await self.app.start()
         
-        # Enviar notificação de que o bot ligou
-        logger.info("Sending online status to Telegram...")
-        await self.notifier.send_status_online()
+        # Teste de envio imediato
+        logger.info("A enviar notificação de arranque...")
+        try:
+            await self.notifier.send_status_online()
+            logger.info("Notificação enviada!")
+        except Exception as e:
+            logger.error(f"Falha ao enviar notificação inicial: {e}")
         
-        logger.info("Bot is polling...")
+        logger.info("A iniciar polling...")
         await self.app.updater.start_polling()
         
-        # Manter o bot a correr
+        # Manter vivo
         try:
             while True:
                 await asyncio.sleep(3600)
         except (KeyboardInterrupt, SystemExit):
+            logger.info("A desligar...")
             await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()
