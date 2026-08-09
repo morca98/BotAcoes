@@ -13,7 +13,7 @@ import requests
 from config import Config
 from scanner import Scanner
 
-# Configuração de Logs
+# Configuração de Logs para o Railway
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -21,6 +21,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 LISBON_TZ = pytz.timezone("Europe/Lisbon")
+
+# --- Credenciais Globais ---
+config = Config()
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or config.TELEGRAM_TOKEN
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID") or config.TELEGRAM_CHAT_ID
+
+# --- Função de Envio Direto (Síncrona) ---
+def send_direct_msg(text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    try:
+        r = requests.post(url, json=payload, timeout=10)
+        logger.info(f"Envio direto: {r.status_code}")
+        return r.status_code == 200
+    except Exception as e:
+        logger.error(f"Erro no envio direto: {e}")
+        return False
 
 # --- Servidor Web para Railway ---
 flask_app = Flask(__name__)
@@ -34,108 +51,70 @@ def run_flask():
     logger.info(f"Servidor web na porta {port}")
     flask_app.run(host='0.0.0.0', port=port)
 
-# --- Classe Principal do Bot ---
-class StockBot:
-    def __init__(self):
-        self.config = Config()
-        self.scanner = Scanner(self.config)
-        self.token = self.config.TELEGRAM_TOKEN
-        self.chat_id = self.config.TELEGRAM_CHAT_ID
-        
-        self.app = ApplicationBuilder().token(self.token).build()
+# --- Scanner e Lógica ---
+bot_scanner = Scanner(config)
 
-    async def send_msg(self, text: str):
-        """Envia mensagem via HTTP direto para evitar bloqueios de polling"""
-        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown"}
+async def run_market_scan(app_bot=None):
+    logger.info("Executando scan de mercado...")
+    signals = []
+    for ticker in config.ASSETS:
         try:
-            requests.post(url, json=payload, timeout=10)
-        except Exception as e:
-            logger.error(f"Erro ao enviar mensagem: {e}")
+            res = await asyncio.get_event_loop().run_in_executor(None, bot_scanner.analyze, ticker)
+            if res:
+                signals.append(res)
+        except:
+            continue
 
-    async def run_scan(self):
-        """Realiza o scan completo e envia relatório"""
-        logger.info("Executando scan de mercado...")
-        signals = []
-        for ticker in self.config.ASSETS:
-            try:
-                # Usar run_in_executor para não travar o loop async
-                res = await asyncio.get_event_loop().run_in_executor(None, self.scanner.analyze, ticker)
-                if res:
-                    signals.append(res)
-            except:
-                continue
+    now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
+    if signals:
+        msg = f"🎯 *Sinais de Compra* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
+        for s in signals:
+            msg += (f"🔹 *{s['ticker']}* @ `${s['price']}`\n"
+                    f"   RSI D: `{s['rsi_daily']}` | RSI 4H: `{s['rsi_4h']}`\n"
+                    f"   ATR%: `{s['atr_pct']}%` | Dist. EMA20: < 8%\n\n")
+    else:
+        msg = f"🔍 *Scan concluído* — {now}\nNenhuma ação cumpre os critérios no momento."
+    
+    send_direct_msg(msg)
 
-        now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
-        if signals:
-            msg = f"🎯 *Sinais de Compra* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
-            for s in signals:
-                msg += (f"🔹 *{s['ticker']}* @ `${s['price']}`\n"
-                        f"   RSI D: `{s['rsi_daily']}` | RSI 4H: `{s['rsi_4h']}`\n"
-                        f"   EMA20 Dist: `{s['atr_pct']}%` (ATR)\n\n")
-            await self.send_msg(msg)
-        else:
-            await self.send_msg(f"🔍 *Scan concluído* — {now}\nNenhuma ação cumpre os critérios técnicos no momento.")
-        return signals
+# --- Handlers ---
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🚀 *Bot de Ações Ativo!*\nUse /scan para análise imediata.")
 
-    # --- Handlers de Comandos ---
-    async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("🚀 *Bot de Ações Ativo!*\nUse /scan para análise imediata ou /help para ver os filtros.", parse_mode="Markdown")
+async def cmd_scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔍 *A iniciar scan manual...*")
+    await run_market_scan()
 
-    async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("🔍 *A iniciar scan manual...*\nIsto pode demorar cerca de 1 minuto.", parse_mode="Markdown")
-        await self.run_scan()
+async def scheduler_loop():
+    logger.info("Agendamento iniciado.")
+    while True:
+        now = datetime.now(LISBON_TZ)
+        if now.hour == 8 and now.minute == 0:
+            await run_market_scan()
+            await asyncio.sleep(65)
+        await asyncio.sleep(30)
 
-    async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        msg = (
-            "📖 *Estratégia de Pontos de Compra*\n\n"
-            "*Filtros:*\n"
-            "• Volume > 1M | Vol. USD > $20M\n"
-            "• Preço > $10 | M.Cap > $2B\n"
-            "• RSI Diário < 70 | RSI 4H < 60\n"
-            "• Distância EMA20 < 8%\n"
-            "• Preço > EMA200\n"
-            "• EMA20 > EMA70 > EMA200"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
+async def main():
+    # 1. Enviar notificação IMEDIATA
+    logger.info("Enviando notificação de arranque...")
+    send_direct_msg("🟢 *Bot Iniciado com Sucesso!*\nO bot está agora ativo no Railway.")
 
-    # --- Loop de Agendamento ---
-    async def scheduler_loop(self):
-        """Loop simplificado para scan diário às 08:00 Lisboa"""
-        logger.info("Loop de agendamento iniciado.")
-        while True:
-            now = datetime.now(LISBON_TZ)
-            # Se for 08:00 e ainda não rodou hoje
-            if now.hour == 8 and now.minute == 0:
-                await self.run_scan()
-                await asyncio.sleep(65) # Esperar o minuto passar
-            await asyncio.sleep(30) # Verificar a cada 30 segundos
-
-    async def run(self):
-        # 1. Iniciar Servidor Web
-        threading.Thread(target=run_flask, daemon=True).start()
-        
-        # 2. Notificação de arranque imediata via HTTP (síncrona para garantir entrega)
-        logger.info("A enviar notificação de arranque...")
-        await self.send_msg("🟢 *Bot Iniciado com Sucesso!*\nO bot está agora ativo e a monitorizar o mercado no Railway.")
-        
-        # 3. Adicionar Handlers
-        self.app.add_handler(CommandHandler("start", self.cmd_start))
-        self.app.add_handler(CommandHandler("scan", self.cmd_scan))
-        self.app.add_handler(CommandHandler("help", self.cmd_help))
-        
-        # 4. Iniciar Agendamento
-        asyncio.create_task(self.scheduler_loop())
-        
-        # 5. Iniciar Polling (com inicialização explícita)
-        logger.info("Bot em polling...")
-        async with self.app:
-            await self.app.start()
-            await self.app.updater.start_polling(drop_pending_updates=True)
-            # Manter o loop vivo
-            while True:
-                await asyncio.sleep(3600)
+    # 2. Iniciar Servidor Web em background
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # 3. Iniciar Agendamento
+    asyncio.create_task(scheduler_loop())
+    
+    # 4. Iniciar Bot do Telegram
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", cmd_start))
+    application.add_handler(CommandHandler("scan", cmd_scan))
+    
+    logger.info("Iniciando Polling...")
+    await application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    bot = StockBot()
-    asyncio.run(bot.run())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
