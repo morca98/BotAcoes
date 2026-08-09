@@ -1,8 +1,7 @@
-python-telegram-bot==21.1
+python-telegram-bot
 yfinance
 pandas
 numpy
 python-dotenv
 requests
-flask
 pytz
