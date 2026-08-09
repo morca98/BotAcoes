@@ -35,8 +35,8 @@ class StockSignalBot:
             self.notifier = Notifier(self.config)
             
             if not self.config.TELEGRAM_TOKEN:
-                logger.error("TELEGRAM_TOKEN not found in config!")
-                raise ValueError("TELEGRAM_TOKEN is missing")
+                logger.error("TELEGRAM_BOT_TOKEN not found in environment variables!")
+                raise ValueError("TELEGRAM_BOT_TOKEN is missing")
                 
             self.app = Application.builder().token(self.config.TELEGRAM_TOKEN).build()
             self.scheduler = AsyncIOScheduler(timezone=LISBON_TZ)

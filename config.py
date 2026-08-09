@@ -5,13 +5,14 @@ Configuration for Stock Signal Bot
 import os
 from dotenv import load_dotenv
 
+# Carrega o .env se existir (útil para desenvolvimento local)
 load_dotenv()
 
 
 class Config:
-    # Telegram
-    TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_TOKEN", "8890309916:AAEkC2DPEtuyGJWDbtof-4s6YozCC9bvjGs")
-    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "1354621810")
+    # Telegram - Usando as chaves exatas da imagem do Railway
+    TELEGRAM_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID")
 
     # Filtros de Universo (Volume e Capitalização)
     MIN_AVG_VOLUME: int = 1_000_000         # Volume médio > 1 milhão de ações/dia
@@ -19,14 +20,7 @@ class Config:
     MIN_PRICE: float = 10.0                 # Preço > 10 USD
     MIN_MARKET_CAP: float = 2_000_000_000   # Capitalização > 2 B USD
 
-    # Critérios Técnicos de Eliminação:
-    # - RSI Diário > 70
-    # - RSI 4h > 60
-    # - Afastamento da EMA20 > 8% (preço esticado em relação à EMA20)
-    # - Preço < EMA200
-    # - EMA20 < EMA70
-    # - EMA70 < EMA200
-    # - ATR% < 2% (baixa volatilidade)
+    # Critérios Técnicos de Eliminação
     RSI_DAILY_MAX: float = 70.0
     RSI_4H_MAX: float = 60.0
     EMA20_MAX_DISTANCE_PCT: float = 8.0  # Eliminar se preço estiver a mais de 8% acima da EMA20
@@ -42,6 +36,6 @@ class Config:
             "QCOM", "TXN", "NEE", "LIN", "ORCL", "HON", "PM", "AMGN", "IBM", "CAT",
             "GE", "SBUX", "BA", "GS", "MS", "BLK", "SPGI", "AXP", "RTX", "DE",
             "ISRG", "ADI", "NOW", "BKNG", "LRCX", "PANW", "SYK", "ADP", "VRTX", "MMC",
-            "C", "USB", "WFC", "PFE", "T", "VZ", "CMCSA", "DIS", "INTC", "QCOM",
-            "PYPL", "UBER", "SHOP", "SQ", "COIN", "PLTR", "ROKU", "SNOW", "NET", "CRWD"
+            "C", "USB", "WFC", "PFE", "T", "VZ", "CMCSA", "DIS", "INTC", "PYPL", 
+            "UBER", "SHOP", "SQ", "COIN", "PLTR", "ROKU", "SNOW", "NET", "CRWD"
         ]
