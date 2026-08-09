@@ -2,13 +2,11 @@ import logging
 import os
 import sys
 import asyncio
-import threading
 from datetime import datetime
 import pytz
-from flask import Flask
+import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import requests
 
 from config import Config
 from scanner import Scanner
@@ -21,18 +19,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 LISBON_TZ = pytz.timezone("Europe/Lisbon")
-
-# --- Servidor Web para o Railway ---
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def health():
-    return "Bot is active and scanning!", 200
-
-def run_flask():
-    port = int(os.getenv("PORT", 8080))
-    logger.info(f"Servidor web na porta {port}")
-    flask_app.run(host='0.0.0.0', port=port)
 
 # --- Classe do Bot ---
 class StockBot:
@@ -92,12 +78,14 @@ class StockBot:
             await asyncio.sleep(30)
 
     async def run(self):
-        threading.Thread(target=run_flask, daemon=True).start()
+        # Notificação de arranque
         await self.send_direct_msg("🟢 *Bot Iniciado com Sucesso no Railway!*")
         
+        # Handlers
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("scan", self.cmd_scan))
         
+        # Agendamento em background
         asyncio.create_task(self.scheduler_loop())
         
         logger.info("Bot em polling...")
