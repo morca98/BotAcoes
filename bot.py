@@ -115,7 +115,8 @@ class StockBot:
         # 1. Iniciar Servidor Web
         threading.Thread(target=run_flask, daemon=True).start()
         
-        # 2. Notificação de arranque
+        # 2. Notificação de arranque imediata via HTTP (síncrona para garantir entrega)
+        logger.info("A enviar notificação de arranque...")
         await self.send_msg("🟢 *Bot Iniciado com Sucesso!*\nO bot está agora ativo e a monitorizar o mercado no Railway.")
         
         # 3. Adicionar Handlers
@@ -126,9 +127,14 @@ class StockBot:
         # 4. Iniciar Agendamento
         asyncio.create_task(self.scheduler_loop())
         
-        # 5. Iniciar Polling
+        # 5. Iniciar Polling (com inicialização explícita)
         logger.info("Bot em polling...")
-        await self.app.run_polling(drop_pending_updates=True)
+        async with self.app:
+            await self.app.start()
+            await self.app.updater.start_polling(drop_pending_updates=True)
+            # Manter o loop vivo
+            while True:
+                await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     bot = StockBot()
