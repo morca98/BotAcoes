@@ -5,6 +5,6 @@ pytz
 yfinance
 pandas
 numpy
-ta-lib
+# ta-lib removido (usamos pandas para cálculos)
 flask
 requests

@@ -2,16 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Instalar curl para healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Instalar dependências
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source
+# Copiar código
 COPY . .
 
-# Health check (5 min interval)
-HEALTHCHECK --interval=5m --timeout=10s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
-
-# Run
+# Railway usa a variável PORT, mas o bot agora é focado em polling. 
+# Mantemos o CMD simples para evitar erros de porta.
 CMD ["python", "bot.py"]
