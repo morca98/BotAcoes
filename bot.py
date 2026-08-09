@@ -54,10 +54,10 @@ class StockSignalBot:
         self.app.add_handler(CommandHandler("help", self.cmd_help))
 
     def setup_scheduler(self):
-        # Scan a cada 4 horas
+        # Scan diário às 08:00
         self.scheduler.add_job(
             self.run_market_scan, "cron",
-            hour="0,4,8,12,16,20", minute=0, id="market_scan"
+            hour=8, minute=0, id="daily_scan"
         )
 
     async def run_market_scan(self):
@@ -151,15 +151,25 @@ class StockSignalBot:
         self.setup_scheduler()
         self.scheduler.start()
 
-        async with self.app:
-            await self.app.initialize()
-            await self.app.start()
-            await self.notifier.send_status_online()
-            await self.app.updater.start_polling()
-            logger.info("Bot is polling...")
-            await asyncio.Event().wait()
+        # Inicializar a aplicação explicitamente
+        await self.app.initialize()
+        await self.app.start()
+        
+        # Enviar notificação de que o bot ligou
+        logger.info("Sending online status to Telegram...")
+        await self.notifier.send_status_online()
+        
+        logger.info("Bot is polling...")
+        await self.app.updater.start_polling()
+        
+        # Manter o bot a correr
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except (KeyboardInterrupt, SystemExit):
             await self.app.updater.stop()
             await self.app.stop()
+            await self.app.shutdown()
 
 
 if __name__ == "__main__":

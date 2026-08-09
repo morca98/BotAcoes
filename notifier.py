@@ -18,9 +18,11 @@ class Notifier:
 
     async def _send(self, text: str):
         try:
+            logger.info(f"Sending message to Telegram (Chat ID: {self.chat_id})...")
             await self.bot.send_message(chat_id=self.chat_id, text=text, parse_mode=ParseMode.MARKDOWN)
+            logger.info("Message sent successfully.")
         except Exception as e:
-            logger.error(f"Telegram error: {e}")
+            logger.error(f"Telegram error while sending message: {e}")
 
     async def send_scan_report(self, total: int, signals: int, tickers: list):
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
