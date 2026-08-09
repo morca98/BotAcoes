@@ -103,8 +103,18 @@ class StockSignalBot:
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def cmd_scan(self, update, context):
-        await update.message.reply_text("🔍 A iniciar scan manual...")
-        await self.run_market_scan()
+        status_msg = await update.message.reply_text("🔍 *A iniciar scan manual...*\n_Isto pode demorar cerca de 1-2 minutos devido ao volume de ativos._", parse_mode="Markdown")
+        
+        try:
+            signals = await self.run_market_scan()
+            
+            if signals:
+                await update.message.reply_text(f"✅ *Scan concluído!*\nEncontradas {len(signals)} ações que cumprem todos os critérios técnicos.", parse_mode="Markdown")
+            else:
+                await update.message.reply_text("✅ *Scan concluído!*\nNenhuma ação cumpre os critérios neste momento.", parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Erro no scan manual: {e}")
+            await update.message.reply_text(f"❌ *Erro ao realizar o scan:* {str(e)}", parse_mode="Markdown")
 
     async def cmd_list_assets(self, update, context):
         assets = ", ".join(sorted(self.config.ASSETS))
