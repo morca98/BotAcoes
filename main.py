@@ -61,8 +61,8 @@ class StockBot:
             msg = f"🎯 *Sinais de Compra* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
             for s in signals:
                 msg += (f"🔹 *{s['ticker']}* @ `${s['price']}`\n"
-                        f"   RSI D: `{s['rsi_daily']}` | RSI 4H: `{s['rsi_4h']}`\n"
-                        f"   ATR%: `{s['atr_pct']}%` | Dist. EMA20: < 8%\n\n")
+                        f"   RS/SPY: `{s['rs_spy']}` | ATR%: `{s['atr_pct']}%`\n"
+                        f"   RSI D: `{s['rsi_daily']}` | RSI 4H: `{s['rsi_4h']}`\n\n")
         else:
             msg = f"🔍 *Scan concluído* — {now}\nNenhuma ação cumpre os critérios no momento."
         

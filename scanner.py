@@ -8,6 +8,17 @@ logger = logging.getLogger(__name__)
 class Scanner:
     def __init__(self, config):
         self.config = config
+        self._spy_data = None
+
+    def _get_spy_data(self):
+        """Obtém dados do SPY para comparação de força relativa."""
+        if self._spy_data is None:
+            try:
+                spy = yf.Ticker("SPY")
+                self._spy_data = spy.history(period="1y", interval="1d")
+            except Exception as e:
+                logger.error(f"Erro ao obter dados do SPY: {e}")
+        return self._spy_data
 
     def analyze(self, ticker: str):
         try:
@@ -42,6 +53,29 @@ class Scanner:
                     return None
             except:
                 market_cap = 0
+
+            # --- CÁLCULO DE FORÇA RELATIVA (RS) VS SPY ---
+            spy_daily = self._get_spy_data()
+            if spy_daily is not None and len(spy_daily) >= 20:
+                # Alinhamos os dados para garantir que comparamos as mesmas datas
+                combined = pd.DataFrame({
+                    'ticker': daily['Close'],
+                    'spy': spy_daily['Close']
+                }).dropna()
+                
+                if len(combined) >= 20:
+                    # RS = (Preço_Atual / Preço_20d_atrás) / (SPY_Atual / SPY_20d_atrás)
+                    ticker_perf = combined['ticker'].iloc[-1] / combined['ticker'].iloc[-20]
+                    spy_perf = combined['spy'].iloc[-1] / combined['spy'].iloc[-20]
+                    relative_strength = ticker_perf / spy_perf
+                else:
+                    relative_strength = 0
+            else:
+                relative_strength = 0
+
+            # Filtro: RS vs SPY > 1
+            if relative_strength <= 1.0:
+                return None
 
             # Indicadores técnicos
             ema20 = float(daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
@@ -95,6 +129,7 @@ class Scanner:
                 "rsi_4h": round(rsi_4h, 2),
                 "ema20": round(ema20, 2),
                 "atr_pct": round(atr_pct, 2),
+                "rs_spy": round(relative_strength, 2),
                 "dollar_volume": round(dollar_volume / 1e6, 2),
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
