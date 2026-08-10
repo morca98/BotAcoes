@@ -4,7 +4,6 @@ import sys
 import asyncio
 from datetime import datetime
 import pytz
-import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -28,25 +27,33 @@ class StockBot:
         self.token = os.getenv("TELEGRAM_BOT_TOKEN") or self.config.TELEGRAM_TOKEN
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID") or self.config.TELEGRAM_CHAT_ID
         
+        # Build application
         self.app = ApplicationBuilder().token(self.token).build()
 
     async def send_direct_msg(self, text: str):
-        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown"}
+        """Envia uma mensagem direta para o chat configurado."""
         try:
-            requests.post(url, json=payload, timeout=10)
+            # Usar o bot da aplicação para enviar mensagens de forma assíncrona
+            await self.app.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="Markdown")
         except Exception as e:
-            logger.error(f"Erro ao enviar: {e}")
+            logger.error(f"Erro ao enviar mensagem: {e}")
 
     async def run_scan(self):
+        """Executa o scan de mercado para todos os ativos configurados."""
         logger.info("A iniciar scan de mercado...")
         signals = []
+        
+        # Obter o loop atual para executar tarefas síncronas num executor
+        loop = asyncio.get_running_loop()
+        
         for ticker in self.config.ASSETS:
             try:
-                res = await asyncio.get_event_loop().run_in_executor(None, self.scanner.analyze, ticker)
+                # Executar análise num executor para não bloquear o loop (yf.history é bloqueante)
+                res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
                 if res:
                     signals.append(res)
-            except:
+            except Exception as e:
+                logger.error(f"Erro ao processar {ticker}: {e}")
                 continue
 
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
@@ -62,35 +69,46 @@ class StockBot:
         await self.send_direct_msg(msg)
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler para o comando /start."""
         await update.message.reply_text("🚀 *Bot de Ações Ativo!*\nUse /scan para análise imediata.")
 
     async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler para o comando /scan."""
         await update.message.reply_text("🔍 *A iniciar scan manual...*")
         await self.run_scan()
 
     async def scheduler_loop(self):
-        logger.info("Agendamento iniciado (08:00).")
+        """Loop de agendamento para execução diária."""
+        logger.info("Agendamento iniciado (08:00 Europe/Lisbon).")
         while True:
             now = datetime.now(LISBON_TZ)
+            # Verifica se é 08:00
             if now.hour == 8 and now.minute == 0:
                 await self.run_scan()
+                # Espera 65 segundos para não disparar várias vezes no mesmo minuto
                 await asyncio.sleep(65)
             await asyncio.sleep(30)
 
-    async def run(self):
-        # Notificação de arranque
-        await self.send_direct_msg("🟢 *Bot Iniciado com Sucesso no Railway!*")
-        
+    async def post_init(self, application):
+        """Função chamada automaticamente após a inicialização do bot."""
+        await self.send_direct_msg("🟢 *Bot Iniciado com Sucesso!*")
+        # Iniciar o loop de agendamento como uma task de background
+        asyncio.create_task(self.scheduler_loop())
+
+    def run(self):
+        """Inicia o bot em modo polling."""
         # Handlers
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("scan", self.cmd_scan))
         
-        # Agendamento em background
-        asyncio.create_task(self.scheduler_loop())
+        # Configurar post_init para startup logic
+        self.app.post_init = self.post_init
         
         logger.info("Bot em polling...")
-        await self.app.run_polling(drop_pending_updates=True)
+        # run_polling é um método síncrono que gere o seu próprio loop de eventos internamente
+        # Isto resolve o erro "RuntimeError: This event loop is already running"
+        self.app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     bot = StockBot()
-    asyncio.run(bot.run())
+    bot.run()
