@@ -69,12 +69,19 @@ class StockBot:
         
         # 3. Analisar cada ativo
         current_signals = {}
-        for ticker in filtered_universe:
+        total_to_analyze = len(filtered_universe)
+        logger.info(f"A analisar {total_to_analyze} ativos...")
+        
+        for idx, ticker in enumerate(filtered_universe):
             try:
+                if idx % 50 == 0 and idx > 0:
+                    logger.info(f"Progresso: {idx}/{total_to_analyze} ativos analisados...")
+                
                 res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
                 if res:
                     current_signals[ticker] = res
-            except:
+            except Exception as e:
+                logger.error(f"Erro ao analisar {ticker}: {e}")
                 continue
 
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
@@ -230,9 +237,10 @@ class StockBot:
             await asyncio.sleep(7200)
 
     async def post_init(self, application):
-        await self.send_direct_msg("🟢 *Bot Pro Iniciado!* (Universo Dinâmico Ativo)")
-        # Iniciar scan imediato
-        asyncio.create_task(self.run_scan(is_manual=False))
+        await self.send_direct_msg("🟢 *Bot Pro Iniciado!* (Universo Dinâmico Ativo)\n_A preparar o primeiro scan..._")
+        # Agendar o primeiro scan com um pequeno delay para garantir que o bot está pronto
+        loop = asyncio.get_event_loop()
+        loop.call_later(5, lambda: asyncio.create_task(self.run_scan(is_manual=False)))
         # Iniciar loops de agendamento
         asyncio.create_task(self.scheduler_loop())
         asyncio.create_task(self.support_monitor_loop())

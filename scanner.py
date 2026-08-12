@@ -73,18 +73,17 @@ class Scanner:
         """Filtra os top ativos por volume financeiro (Dollar Volume)."""
         logger.info(f"Iniciando filtro de liquidez para {len(tickers)} ativos (Alvo: {limit})")
         
-        # Se o universo for pequeno, não filtrar
         if len(tickers) <= limit:
             return tickers
 
         data = []
-        # Aumentar o chunk para processar mais rápido
-        chunk_size = 200
+        # Chunk menor para evitar timeouts de rede
+        chunk_size = 100
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i + chunk_size]
             try:
-                # Usar yf.download com parâmetros mais robustos
-                batch = yf.download(chunk, period="5d", interval="1d", group_by='ticker', threads=True, progress=False)
+                # Período de 1d é suficiente e muito mais rápido
+                batch = yf.download(chunk, period="1d", group_by='ticker', threads=True, progress=False, timeout=20)
                 
                 for t in chunk:
                     try:
