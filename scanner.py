@@ -176,9 +176,17 @@ class Scanner:
             daily_data.index = pd.to_datetime(daily_data.index)
             
             # 1. Abertura Diária Anterior (PDO)
-            # Se hoje é dia de negociação e o mercado está aberto, o último índice é hoje.
-            # O dia anterior fechado é o dia útil imediatamente anterior.
-            pdo_row = daily_data.iloc[-2]
+            # Garantir que pegamos o último dia útil que já fechou
+            now_utc = datetime.now(pytz.UTC)
+            last_candle_date = daily_data.index[-1].date()
+            
+            if last_candle_date >= now_utc.date():
+                # O último candle é hoje, o anterior fechado é o penúltimo
+                pdo_row = daily_data.iloc[-2]
+            else:
+                # O último candle já é de um dia passado (mercado ainda não abriu hoje)
+                pdo_row = daily_data.iloc[-1]
+                
             pdo = float(pdo_row['Open'])
             pdo_time = pdo_row.name
             
