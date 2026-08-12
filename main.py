@@ -148,12 +148,12 @@ class StockBot:
         
         support_msg = ""
         if s.get('key_supports'):
-            # Já filtramos para ter apenas virgens no scanner, mas garantimos aqui também
             virgin_supports = [sup for sup in s['key_supports'] if sup.get('virgin')]
             if virgin_supports:
                 support_msg = "🛡️ *Suportes Virgens Próximos:*\n"
                 for sup in virgin_supports:
-                    support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%)\n"
+                    conf_text = " (Confluência EMA 200 🎯)" if sup.get('confluence') else ""
+                    support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%){conf_text}\n"
 
         return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
                 f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
@@ -224,11 +224,25 @@ class StockBot:
                         if sup['virgin'] and sup['dist'] <= 0.2:
                             touch_key = f"{ticker}_{sup['type']}_{sup['price']}"
                             if touch_key not in self.notified_touches:
+                                # 1. Confirmação de Volume (Volume Spike > 1.5x média 20min)
+                                vol_spike = False
+                                try:
+                                    avg_vol = current_data['Volume'].iloc[-21:-1].mean()
+                                    last_vol = current_data['Volume'].iloc[-1]
+                                    if last_vol > (avg_vol * 1.5):
+                                        vol_spike = True
+                                except: pass
+                                
+                                vol_msg = "✅ *Defesa Institucional (Volume Spike!)*" if vol_spike else "⚠️ Sem pico de volume"
+                                conf_msg = "🎯 *Confluência EMA 200 Detetada!*" if sup.get('confluence') else ""
+                                
                                 current_price_fmt = round(current_price, 2)
                                 alert = (f"🎯 *ZONA DE COMPRA - Suporte Virgem Tocado! (< 0.2%)*\n"
                                          f"🔥 *{ticker}* @ `${current_price_fmt}` encostou em: *{sup['type']} Open (${sup['price']})*\n"
+                                         f"   {vol_msg}\n"
+                                         f"   {conf_msg}\n"
                                          f"   RS/Setor: `{s['rs_sector']}` | RSI D: `{s['rsi_daily']}`")
-                                await self.send_direct_msg(alert)
+                                await self.send_direct_msg(alert.replace("\n   \n", "\n"))
                                 self.notified_touches.add(touch_key)
                 
             except Exception as e:

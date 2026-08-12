@@ -172,6 +172,9 @@ class Scanner:
         try:
             if daily_data is None or len(daily_data) < 20: return supports
             
+            # Calcular EMA 200 para confluência
+            ema200 = float(daily_data["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
+            
             # 1. Abertura Diária (Últimos 3 dias úteis)
             for i in range(1, 4):
                 if len(daily_data) < i: break
@@ -189,8 +192,16 @@ class Scanner:
                 if is_virgin and current_price > d_open:
                     dist = ((current_price - d_open) / d_open) * 100
                     if dist <= 12.0:
+                        # Verificar confluência com EMA 200 (dentro de 1%)
+                        confluence = abs(d_open - ema200) / ema200 <= 0.01
                         label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
-                        supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
+                        supports.append({
+                            "type": label, 
+                            "price": round(d_open, 2), 
+                            "dist": round(dist, 2), 
+                            "virgin": True,
+                            "confluence": confluence
+                        })
 
             # 2. Aberturas Semanais (Esta semana + 52 semanas atrás)
             # Encontrar a última segunda-feira disponível no índice
@@ -215,9 +226,17 @@ class Scanner:
                 if is_virgin and current_price > w_open:
                     dist = ((current_price - w_open) / w_open) * 100
                     if dist <= 12.0:
+                        # Verificar confluência com EMA 200 (dentro de 1%)
+                        confluence = abs(w_open - ema200) / ema200 <= 0.01
                         date_str = w_time.strftime("%d/%m")
                         label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
-                        supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
+                        supports.append({
+                            "type": label, 
+                            "price": round(w_open, 2), 
+                            "dist": round(dist, 2), 
+                            "virgin": True,
+                            "confluence": confluence
+                        })
             
             unique_supports = {}
             for s in supports:
