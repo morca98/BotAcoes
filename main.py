@@ -145,10 +145,9 @@ class StockBot:
         
         support_msg = ""
         if s.get('key_supports'):
-            support_msg = "🛡️ *Suportes Próximos:*\n"
+            support_msg = "🛡️ *Suportes Virgens Próximos:*\n"
             for sup in s['key_supports']:
-                virgin_tag = " (Virgem 🆕)" if sup['virgin'] else ""
-                support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%){virgin_tag}\n"
+                support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%)\n"
 
         return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
                 f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
