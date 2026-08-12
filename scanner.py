@@ -165,47 +165,67 @@ class Scanner:
         return False
 
     def get_key_supports(self, ticker, current_price, h1_df=None):
-        """Calcula Abertura Diária e Semanal e identifica suportes virgens."""
+        """Calcula Abertura Diária e Semanal de velas FECHADAS e identifica suportes virgens."""
         supports = []
         try:
-            df = h1_df
-            if df is None or df.empty:
-                h1_data = yf.download(ticker, period="7d", interval="1h", progress=False, group_by='ticker')
-                if h1_data.empty: return supports
-                df = h1_data[ticker] if isinstance(h1_data.columns, pd.MultiIndex) else h1_data
+            tk = yf.Ticker(ticker)
+            # Obter dados diários para identificar velas fechadas
+            daily_data = tk.history(period="1mo", interval="1d")
+            if len(daily_data) < 5: return supports
             
-            df.index = pd.to_datetime(df.index)
+            # Se o mercado estiver aberto, o último item [-1] é o dia atual (não fechado)
+            # O último dia fechado é o penúltimo [-2]
+            pdo_row = daily_data.iloc[-2]
+            pdo = float(pdo_row['Open'])
+            pdo_time = pdo_row.name
+            
+            # Abertura Semanal Anterior (PWO)
+            # Resample para semanas (iniciando segunda-feira)
+            weekly_data = daily_data.resample('W-MON').agg({'Open': 'first', 'Low': 'min'})
+            if len(weekly_data) < 2: return supports
+            pwo_row = weekly_data.iloc[-2] # A semana anterior completa
+            pwo = float(pwo_row['Open'])
+            pwo_time = pwo_row.name
 
-            # 1. Abertura Semanal (WO)
-            start_of_week_date = df.index[-1] - pd.Timedelta(days=df.index[-1].weekday())
-            start_of_week = df[df.index.date >= start_of_week_date.date()]
-            if not start_of_week.empty:
-                wo = float(start_of_week['Open'].iloc[0])
-                min_since_wo = float(start_of_week['Low'].min())
-                is_virgin = min_since_wo >= (wo * 0.999)
-                if current_price > wo:
-                    dist = ((current_price - wo) / wo) * 100
-                    supports.append({
-                        "type": "Semanal", 
-                        "price": round(wo, 2), 
-                        "dist": round(dist, 2),
-                        "virgin": is_virgin
-                    })
+            # Obter dados intraday para verificar se foi testado (desde a abertura da semana anterior)
+            h1 = h1_df
+            if h1 is None or h1.empty or h1.index[0] > pwo_time:
+                h1 = tk.history(start=pwo_time, interval="1h")
+            
+            if h1.empty: return supports
+            h1.index = pd.to_datetime(h1.index)
 
-            # 2. Abertura Diária (DO)
-            start_of_day = df[df.index.date == df.index[-1].date()]
-            if not start_of_day.empty:
-                do = float(start_of_day['Open'].iloc[0])
-                min_since_do = float(start_of_day['Low'].min())
-                is_virgin = min_since_do >= (do * 0.999)
-                if current_price > do:
-                    dist = ((current_price - do) / do) * 100
-                    supports.append({
-                        "type": "Diária", 
-                        "price": round(do, 2), 
-                        "dist": round(dist, 2),
-                        "virgin": is_virgin
-                    })
+            # 1. Verificar PDO (Previous Day Open)
+            after_pdo = h1[h1.index > pdo_time]
+            is_pdo_virgin = False
+            if not after_pdo.empty:
+                min_since_pdo = float(after_pdo['Low'].min())
+                is_pdo_virgin = min_since_pdo >= (pdo * 0.999)
+            
+            if current_price > pdo:
+                dist = ((current_price - pdo) / pdo) * 100
+                supports.append({
+                    "type": "Diária (Ant.)", 
+                    "price": round(pdo, 2), 
+                    "dist": round(dist, 2),
+                    "virgin": is_pdo_virgin
+                })
+
+            # 2. Verificar PWO (Previous Week Open)
+            after_pwo = h1[h1.index > pwo_time]
+            is_pwo_virgin = False
+            if not after_pwo.empty:
+                min_since_pwo = float(after_pwo['Low'].min())
+                is_pwo_virgin = min_since_pwo >= (pwo * 0.999)
+                
+            if current_price > pwo:
+                dist = ((current_price - pwo) / pwo) * 100
+                supports.append({
+                    "type": "Semanal (Ant.)", 
+                    "price": round(pwo, 2), 
+                    "dist": round(dist, 2),
+                    "virgin": is_pwo_virgin
+                })
         except Exception as e:
             logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
             
