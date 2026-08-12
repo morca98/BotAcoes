@@ -60,8 +60,12 @@ class StockBot:
         if signals:
             msg = f"🎯 *Sinais de Compra* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
             for s in signals:
+                div_status = "✅ Sim" if s['div_bullish'] else "❌ Não"
+                vcp_status = "✅ Sim" if s['is_vcp'] else "❌ Não"
                 msg += (f"🔹 *{s['ticker']}* @ `${s['price']}`\n"
                         f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
+                        f"   Divergência Bullish (4h): {div_status}\n"
+                        f"   Contração Volat. (VCP): {vcp_status}\n"
                         f"   ATR%: `{s['atr_pct']}%` | RSI D: `{s['rsi_daily']}`\n\n")
         else:
             msg = f"🔍 *Scan concluído* — {now}\nNenhuma ação cumpre os critérios no momento."

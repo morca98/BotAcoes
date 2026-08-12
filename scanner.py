@@ -25,25 +25,52 @@ class Scanner:
         self._sector_data_cache = {}
 
     def _get_sector_etf_data(self, sector_name: str):
-        """Obtém dados do ETF correspondente ao setor para comparação de força relativa."""
         etf_ticker = self.SECTOR_ETFS.get(sector_name)
         if not etf_ticker:
             return None
-            
         if etf_ticker not in self._sector_data_cache:
             try:
                 etf = yf.Ticker(etf_ticker)
-                # Obter dados de 1 ano para performance anual
                 self._sector_data_cache[etf_ticker] = etf.history(period="2y", interval="1d")
             except Exception as e:
                 logger.error(f"Erro ao obter dados do ETF {etf_ticker}: {e}")
                 return None
         return self._sector_data_cache.get(etf_ticker)
 
+    def _check_divergence(self, prices, indicator):
+        """Verifica se existe uma divergência bullish (Preço cai, Indicador sobe)."""
+        if len(prices) < 20 or len(indicator) < 20:
+            return False
+        
+        # Simplificação: comparar as duas últimas mínimas locais
+        # Encontrar índices de mínimas no preço
+        p_min1 = prices.iloc[-10:].min()
+        p_min2 = prices.iloc[-20:-10].min()
+        
+        i_min1 = indicator.iloc[-10:].min()
+        i_min2 = indicator.iloc[-20:-10].min()
+        
+        # Divergência Bullish: Preço fez mínima menor, mas indicador fez mínima maior
+        if p_min1 < p_min2 and i_min1 > i_min2:
+            return True
+        return False
+
+    def _check_vcp(self, df):
+        """Verifica contração de volatilidade (VCP)."""
+        if len(df) < 20:
+            return False
+        
+        atr_short = self._atr(df, 5).iloc[-1]
+        atr_long = self._atr(df, 20).iloc[-1]
+        
+        # Contração: Volatilidade recente é significativamente menor que a média
+        if atr_short < (atr_long * 0.75):
+            return True
+        return False
+
     def analyze(self, ticker: str):
         try:
             tk = yf.Ticker(ticker)
-            # Aumentar para 2 anos para garantir que temos 1 ano completo de dados após alinhamento
             daily = tk.history(period="2y", interval="1d")
             h4 = tk.history(period="60d", interval="60m")
             
@@ -52,21 +79,15 @@ class Scanner:
 
             current_price = float(daily["Close"].iloc[-1])
             
-            # 1. Filtro de Preço > 10 USD
             if current_price < self.config.MIN_PRICE:
                 return None
-
-            # 2. Volume médio > 1 milhão
             avg_volume = float(daily["Volume"].iloc[-30:].mean())
             if avg_volume < self.config.MIN_AVG_VOLUME:
                 return None
-
-            # 3. Volume em dólares > 20 milhões USD
             dollar_volume = current_price * avg_volume
             if dollar_volume < self.config.MIN_DOLLAR_VOLUME:
                 return None
 
-            # 4. Capitalização e Setor
             try:
                 info = tk.info
                 market_cap = info.get("marketCap", 0)
@@ -77,29 +98,19 @@ class Scanner:
                 market_cap = 0
                 sector = None
 
-            # --- CÁLCULO DE FORÇA RELATIVA (RS) VS SETOR (1 ANO) ---
+            # RS Setorial (1 ano)
             relative_strength = 0
             etf_ticker = "N/A"
-            
             if sector:
                 sector_daily = self._get_sector_etf_data(sector)
                 etf_ticker = self.SECTOR_ETFS.get(sector, "N/A")
-                
                 if sector_daily is not None and len(sector_daily) >= 252:
-                    # Alinhamos os dados para garantir que comparamos as mesmas datas
-                    combined = pd.DataFrame({
-                        'ticker': daily['Close'],
-                        'sector': sector_daily['Close']
-                    }).dropna()
-                    
+                    combined = pd.DataFrame({'ticker': daily['Close'], 'sector': sector_daily['Close']}).dropna()
                     if len(combined) >= 252:
-                        # Performance 1 ano (aprox 252 dias úteis)
-                        # RS = (Preço_Atual / Preço_1ano_atrás) / (Setor_Atual / Setor_1ano_atrás)
                         ticker_perf = combined['ticker'].iloc[-1] / combined['ticker'].iloc[-252]
                         sector_perf = combined['sector'].iloc[-1] / combined['sector'].iloc[-252]
                         relative_strength = ticker_perf / sector_perf
             
-            # Filtro: RS vs Setor > 1 (Performance do último ano)
             if relative_strength <= 1.0:
                 return None
 
@@ -107,31 +118,39 @@ class Scanner:
             ema20 = float(daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
             ema70 = float(daily["Close"].ewm(span=70, adjust=False).mean().iloc[-1])
             ema200 = float(daily["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
-
             rsi_daily = float(self._rsi(daily["Close"], 14).iloc[-1])
             
             if h4 is not None and len(h4) > 14:
-                rsi_4h = float(self._rsi(h4["Close"], 14).iloc[-1])
+                rsi_4h_series = self._rsi(h4["Close"], 14)
+                rsi_4h = float(rsi_4h_series.iloc[-1])
+                
+                # Cálculo MACD 4h
+                exp1 = h4["Close"].ewm(span=12, adjust=False).mean()
+                exp2 = h4["Close"].ewm(span=26, adjust=False).mean()
+                macd_4h = exp1 - exp2
+                
+                # Deteção de Divergência Bullish (4h)
+                has_div_rsi = self._check_divergence(h4["Close"], rsi_4h_series)
+                has_div_macd = self._check_divergence(h4["Close"], macd_4h)
+                div_bullish = has_div_rsi or has_div_macd
             else:
                 rsi_4h = rsi_daily
+                div_bullish = False
+
+            # Contração de Volatilidade (VCP) no diário
+            is_vcp = self._check_vcp(daily)
 
             atr = float(self._atr(daily, 14).iloc[-1])
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
-            # --- FILTROS DE ELIMINAÇÃO ---
-            if rsi_daily > self.config.MAX_RSI_DAILY:
-                return None
-            if rsi_4h > self.config.MAX_RSI_4H:
-                return None
-            if dist_ema20 > self.config.MAX_EMA20_DIST_PCT:
-                return None
-            if current_price < ema200:
-                return None
-            if ema20 < ema70 or ema70 < ema200:
-                return None
-            if atr_pct < self.config.MIN_ATR_PCT:
-                return None
+            # FILTROS DE EXCLUSÃO
+            if rsi_daily > self.config.MAX_RSI_DAILY: return None
+            if rsi_4h > self.config.MAX_RSI_4H: return None
+            if dist_ema20 > self.config.MAX_EMA20_DIST_PCT: return None
+            if current_price < ema200: return None
+            if ema20 < ema70 or ema70 < ema200: return None
+            if atr_pct < self.config.MIN_ATR_PCT: return None
 
             return {
                 "ticker": ticker,
@@ -142,6 +161,8 @@ class Scanner:
                 "atr_pct": round(atr_pct, 2),
                 "rs_sector": round(relative_strength, 2),
                 "sector_etf": etf_ticker,
+                "div_bullish": div_bullish,
+                "is_vcp": is_vcp,
                 "dollar_volume": round(dollar_volume / 1e6, 2),
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
