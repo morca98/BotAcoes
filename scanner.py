@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import requests
 import io
+from datetime import datetime
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -213,32 +215,36 @@ class Scanner:
             h1.index = pd.to_datetime(h1.index)
 
             # Verificar PDO (Previous Day Open)
-            # Só adicionar se for VIRGEM (preço nunca caiu abaixo do Open desde que abriu)
             after_pdo = h1[h1.index >= pdo_time]
+            is_pdo_virgin = False
             if not after_pdo.empty:
                 min_since_pdo = float(after_pdo['Low'].min())
-                if min_since_pdo >= (pdo * 0.999) and current_price > pdo:
-                    dist = ((current_price - pdo) / pdo) * 100
-                    supports.append({
-                        "type": "Diária (Ant.)", 
-                        "price": round(pdo, 2), 
-                        "dist": round(dist, 2),
-                        "virgin": True
-                    })
+                is_pdo_virgin = min_since_pdo >= (pdo * 0.999)
+            
+            if current_price > pdo:
+                dist = ((current_price - pdo) / pdo) * 100
+                supports.append({
+                    "type": "Diária (Ant.)", 
+                    "price": round(pdo, 2), 
+                    "dist": round(dist, 2),
+                    "virgin": is_pdo_virgin
+                })
 
             # Verificar PWO (Previous Week Open)
-            # Só adicionar se for VIRGEM
             after_pwo = h1[h1.index >= pwo_time]
+            is_pwo_virgin = False
             if not after_pwo.empty:
                 min_since_pwo = float(after_pwo['Low'].min())
-                if min_since_pwo >= (pwo * 0.999) and current_price > pwo:
-                    dist = ((current_price - pwo) / pwo) * 100
-                    supports.append({
-                        "type": "Semanal (Ant.)", 
-                        "price": round(pwo, 2), 
-                        "dist": round(dist, 2),
-                        "virgin": True
-                    })
+                is_pwo_virgin = min_since_pwo >= (pwo * 0.999)
+                
+            if current_price > pwo:
+                dist = ((current_price - pwo) / pwo) * 100
+                supports.append({
+                    "type": "Semanal (Ant.)", 
+                    "price": round(pwo, 2), 
+                    "dist": round(dist, 2),
+                    "virgin": is_pwo_virgin
+                })
         except Exception as e:
             logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
             
