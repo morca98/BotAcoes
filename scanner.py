@@ -182,9 +182,9 @@ class Scanner:
                 d_open, d_time = float(row['Open']), row.name
                 after_d = daily_data[daily_data.index >= d_time]
                 if not after_d.empty:
-                    # Virgindade baseada na MÍNIMA (Low) - Um suporte virgem nunca pode ter sido tocado
-                    min_low = float(after_d['Low'].min())
-                    if min_low >= (d_open * 0.999) and current_price > d_open:
+                    # Virgindade baseada no FECHO (Close) - Mais fiável para suportes institucionais
+                    min_close = float(after_d['Close'].min())
+                    if min_close >= (d_open * 0.999) and current_price > d_open:
                         dist = ((current_price - d_open) / d_open) * 100
                         if dist <= 10.0:
                             label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
@@ -199,11 +199,11 @@ class Scanner:
                 w_row = week_df.iloc[0]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
-                # Virgindade Semanal: O preço nunca pode ter caído abaixo da abertura da semana
+                # Virgindade Semanal: O preço nunca pode ter FECHADO abaixo da abertura da semana
                 after_w = daily_data[daily_data.index >= w_time]
                 if not after_w.empty:
-                    min_low = float(after_w['Low'].min())
-                    if min_low >= (w_open * 0.999) and current_price > w_open:
+                    min_close = float(after_w['Close'].min())
+                    if min_close >= (w_open * 0.999) and current_price > w_open:
                         dist = ((current_price - w_open) / w_open) * 100
                         if dist <= 10.0:
                             date_str = w_time.strftime("%d/%m")
