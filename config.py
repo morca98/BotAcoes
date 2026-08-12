@@ -9,8 +9,6 @@ class Config:
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1354621810")
     
     # Filtros de Seleção (Universo)
-    MIN_AVG_VOLUME = 1_000_000         # > 1M ações/dia
-    MIN_DOLLAR_VOLUME = 20_000_000     # > 20M USD/dia
     MIN_PRICE = 10.0                   # > 10 USD
     MIN_MARKET_CAP = 2_000_000_000     # > 2B USD
     

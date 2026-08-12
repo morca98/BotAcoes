@@ -81,12 +81,6 @@ class Scanner:
             
             if current_price < self.config.MIN_PRICE:
                 return None
-            avg_volume = float(daily["Volume"].iloc[-30:].mean())
-            if avg_volume < self.config.MIN_AVG_VOLUME:
-                return None
-            dollar_volume = current_price * avg_volume
-            if dollar_volume < self.config.MIN_DOLLAR_VOLUME:
-                return None
 
             try:
                 info = tk.info
@@ -163,7 +157,6 @@ class Scanner:
                 "sector_etf": etf_ticker,
                 "div_bullish": div_bullish,
                 "is_vcp": is_vcp,
-                "dollar_volume": round(dollar_volume / 1e6, 2),
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
 
