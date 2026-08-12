@@ -85,7 +85,7 @@ class StockBot:
 
         msg = ""
         if is_manual:
-            msg = f"🔍 *Scan Completo ({len(filtered_universe)} ativos)* — {now}\n"
+            msg = f"🔍 *Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)* — {now}\n"
             if not current_signals:
                 msg += "Nenhuma ação cumpre os critérios no momento."
             else:

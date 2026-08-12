@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -29,52 +30,60 @@ class Scanner:
         self._universe_cache = None
 
     def get_dynamic_universe(self):
-        """Obtém componentes do S&P 500, Nasdaq 100 e ETFs temáticos."""
+        """Obtém componentes do S&P 500, Nasdaq 100 e ETFs temáticos com User-Agent para evitar 403."""
         tickers = set(self.THEMATIC_ETFS)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         
         try:
             # S&P 500
-            sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+            url_sp500 = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+            response = requests.get(url_sp500, headers=headers, timeout=10)
+            sp500 = pd.read_html(io.StringIO(response.text))[0]
             tickers.update(sp500['Symbol'].tolist())
+            logger.info(f"S&P 500 obtido: {len(sp500)} ativos")
             
             # Nasdaq 100
-            nasdaq100 = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[4]
-            # Wikipedia structure can change, try different index if 4 fails
-            if 'Ticker' in nasdaq100.columns:
-                tickers.update(nasdaq100['Ticker'].tolist())
-            else:
-                nasdaq100 = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[3]
-                tickers.update(nasdaq100['Symbol'].tolist())
+            url_nasdaq = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+            response = requests.get(url_nasdaq, headers=headers, timeout=10)
+            tables = pd.read_html(io.StringIO(response.text))
+            for df in tables:
+                if 'Ticker' in df.columns:
+                    tickers.update(df['Ticker'].tolist())
+                    break
+                elif 'Symbol' in df.columns:
+                    tickers.update(df['Symbol'].tolist())
+                    break
+            logger.info("Nasdaq 100 obtido")
         except Exception as e:
             logger.error(f"Erro ao obter índices da Wikipedia: {e}")
-            # Fallback para a lista base do config se falhar
             tickers.update(self.config.ASSETS)
 
-        # Limpeza de símbolos (ex: BRK.B para BRK-B)
-        clean_tickers = [t.replace('.', '-') for t in tickers if isinstance(t, str)]
+        clean_tickers = [str(t).replace('.', '-') for t in tickers if isinstance(t, (str, float)) and str(t) != 'nan']
         return list(set(clean_tickers))
 
     def filter_by_liquidity(self, tickers, limit=500):
         """Filtra os top ativos por volume financeiro (Dollar Volume)."""
         logger.info(f"A filtrar liquidez para {len(tickers)} ativos...")
+        if len(tickers) <= limit:
+            return tickers
+
         data = []
-        
-        # Processar em lotes para evitar timeouts
-        chunk_size = 50
+        chunk_size = 100
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i + chunk_size]
             try:
-                # Obter apenas o último dia de volume e preço
                 tickers_str = " ".join(chunk)
-                batch = yf.download(tickers_str, period="5d", interval="1d", group_by='ticker', threads=True, progress=False)
+                # Obter dados rápidos de 1 dia
+                batch = yf.download(tickers_str, period="1d", group_by='ticker', threads=True, progress=False)
                 
                 for t in chunk:
                     try:
-                        if t in batch and not batch[t].empty:
-                            last_close = batch[t]['Close'].iloc[-1]
-                            last_vol = batch[t]['Volume'].iloc[-1]
+                        ticker_data = batch[t] if len(chunk) > 1 else batch
+                        if not ticker_data.empty:
+                            last_close = ticker_data['Close'].iloc[-1]
+                            last_vol = ticker_data['Volume'].iloc[-1]
                             dollar_vol = last_close * last_vol
-                            if not np.isnan(dollar_vol):
+                            if not np.isnan(dollar_vol) and dollar_vol > 0:
                                 data.append({'ticker': t, 'dollar_vol': dollar_vol})
                     except:
                         continue
@@ -84,6 +93,7 @@ class Scanner:
 
         df = pd.DataFrame(data)
         if df.empty:
+            logger.warning("Filtro de liquidez vazio, a usar fallback.")
             return tickers[:limit]
             
         top_tickers = df.sort_values(by='dollar_vol', ascending=False).head(limit)['ticker'].tolist()
