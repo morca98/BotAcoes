@@ -188,9 +188,9 @@ class Scanner:
                 d_open, d_time = float(row['Open']), row.name
                 
                 # Virgindade: O preço nunca TOCOU (Low) o nível NOS DIAS POSTERIORES à abertura
-                after_d = daily_data[daily_data.index > d_time]
                 is_virgin = True
-                if not after_d.empty:
+                if i > 1: # Se não for hoje, verificar dias posteriores
+                    after_d = daily_data.iloc[-i+1:]
                     min_low_after = float(after_d['Low'].min())
                     if min_low_after < (d_open * 0.999):
                         is_virgin = False
@@ -225,8 +225,8 @@ class Scanner:
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
                 # Virgindade: O preço nunca TOCOU (Low) o nível NOS DIAS POSTERIORES ao dia da abertura
-                after_w = daily_data[daily_data.index > w_time]
                 is_virgin = True
+                after_w = daily_data[daily_data.index > w_time]
                 if not after_w.empty:
                     min_low_after = float(after_w['Low'].min())
                     if min_low_after < (w_open * 0.999):

@@ -7,3 +7,4 @@ requests
 pytz
 lxml
 html5lib
+nest-asyncio

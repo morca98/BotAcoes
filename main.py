@@ -279,7 +279,11 @@ class StockBot:
         self.app.add_handler(CommandHandler("remove", self.cmd_remove))
         self.app.add_handler(CommandHandler("watchlist", self.cmd_watchlist))
         self.app.post_init = self.post_init
-        self.app.run_polling(drop_pending_updates=True)
+        
+        # Usar a forma recomendada para v20+ em ambientes com loops ativos
+        import nest_asyncio
+        nest_asyncio.apply()
+        self.app.run_polling(drop_pending_updates=True, close_loop=False)
 
 if __name__ == "__main__":
     bot = StockBot()
