@@ -114,13 +114,7 @@ class StockBot:
                 # Ordenar por score de ranking (descendente)
                 sorted_signals = sorted(current_signals.values(), key=get_rank_score, reverse=True)
                 
-                # OTIMIZAÇÃO: Calcular suportes APENAS para os finalistas do ranking
-                tasks = []
-                for s in sorted_signals:
-                    tasks.append(self._enrich_with_supports(s, loop))
-                
-                await asyncio.gather(*tasks)
-                
+                # OTIMIZAÇÃO: Suportes já calculados no Scanner.analyze
                 for s in sorted_signals:
                     msg += self._format_signal(s)
         else:
@@ -129,20 +123,12 @@ class StockBot:
                 if new_tickers:
                     msg += "🌟 *Novos Ativos na Lista (Ordenados por Força):*\n"
                     sorted_new = sorted([current_signals[t] for t in new_tickers], key=get_rank_score, reverse=True)
-                    
-                    tasks = [self._enrich_with_supports(s, loop) for s in sorted_new]
-                    await asyncio.gather(*tasks)
-                    
                     for s in sorted_new:
                         msg += self._format_signal(s)
 
                 if new_breakouts:
                     msg += "\n🚀 *Rompimentos 2h Detetados:*\n"
                     sorted_breakouts = sorted([current_signals[t] for t in new_breakouts], key=get_rank_score, reverse=True)
-                    
-                    tasks = [self._enrich_with_supports(s, loop) for s in sorted_breakouts]
-                    await asyncio.gather(*tasks)
-                    
                     for s in sorted_breakouts:
                         if s['ticker'] in new_tickers:
                             msg += f"🔹 *{s['ticker']}* também confirmou rompimento!\n"
@@ -154,12 +140,6 @@ class StockBot:
 
         if msg:
             await self.send_direct_msg(msg)
-
-    async def _enrich_with_supports(self, s, loop):
-        try:
-            s['key_supports'] = await loop.run_in_executor(None, self.scanner.get_key_supports, s['ticker'], s['price'])
-        except:
-            s['key_supports'] = []
 
     def _format_signal(self, s):
         div_status = "✅ Sim" if s['div_bullish'] else "❌ Não"

@@ -166,27 +166,24 @@ class Scanner:
             return True
         return False
 
-    def get_key_supports(self, ticker, current_price):
+    def get_key_supports(self, ticker, current_price, daily_data):
         """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás)."""
         supports = []
         try:
-            if np.isnan(current_price): return supports
-            tk = yf.Ticker(ticker)
-            daily_data = tk.history(period="18mo", interval="1d")
-            if len(daily_data) < 20: return supports
-            daily_data.index = pd.to_datetime(daily_data.index)
+            if daily_data is None or len(daily_data) < 20: return supports
             
             # 1. Abertura Diária (Últimos 3 dias úteis)
             for i in range(1, 4):
+                if len(daily_data) < i: break
                 row = daily_data.iloc[-i]
                 d_open, d_time = float(row['Open']), row.name
                 
-                # Virgindade: O preço nunca tocou o nível NOS DIAS POSTERIORES à abertura
+                # Virgindade: O preço nunca FECHOU abaixo do nível NOS DIAS POSTERIORES à abertura
                 after_d = daily_data[daily_data.index > d_time]
                 is_virgin = True
                 if not after_d.empty:
-                    min_low_after = float(after_d['Low'].min())
-                    if min_low_after < (d_open * 0.999):
+                    min_close_after = float(after_d['Close'].min())
+                    if min_close_after < (d_open * 0.999):
                         is_virgin = False
                 
                 if is_virgin and current_price > d_open:
@@ -196,7 +193,10 @@ class Scanner:
                         supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
 
             # 2. Aberturas Semanais (Esta semana + 52 semanas atrás)
-            last_monday = daily_data.index[-1] - pd.Timedelta(days=daily_data.index[-1].weekday())
+            # Encontrar a última segunda-feira disponível no índice
+            last_date = daily_data.index[-1]
+            last_monday = last_date - pd.Timedelta(days=last_date.weekday())
+            
             for i in range(0, 53):
                 target_monday = last_monday - pd.Timedelta(days=7 * i)
                 week_df = daily_data[daily_data.index.date >= target_monday.date()]
@@ -204,12 +204,12 @@ class Scanner:
                 w_row = week_df.iloc[0]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
-                # Virgindade: O preço nunca tocou o nível NOS DIAS POSTERIORES ao dia da abertura
+                # Virgindade: O preço nunca FECHOU abaixo do nível NOS DIAS POSTERIORES ao dia da abertura
                 after_w = daily_data[daily_data.index > w_time]
                 is_virgin = True
                 if not after_w.empty:
-                    min_low_after = float(after_w['Low'].min())
-                    if min_low_after < (w_open * 0.999):
+                    min_close_after = float(after_w['Close'].min())
+                    if min_close_after < (w_open * 0.999):
                         is_virgin = False
                 
                 if is_virgin and current_price > w_open:
@@ -299,8 +299,8 @@ class Scanner:
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
-            # Otimização: Suportes calculados apenas para finalistas no main.py
-            supports = []
+            # Calcular suportes virgens usando os dados já carregados
+            supports = self.get_key_supports(ticker, current_price, daily)
 
             # Validação final para evitar NaN no relatório
             metrics = [current_price, rsi_daily, rsi_h1, atr_pct, relative_strength, dist_ema20]
