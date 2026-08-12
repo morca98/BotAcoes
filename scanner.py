@@ -178,17 +178,17 @@ class Scanner:
                 row = daily_data.iloc[-i]
                 d_open, d_time = float(row['Open']), row.name
                 
-                # Virgindade: O preço nunca FECHOU abaixo do nível NOS DIAS POSTERIORES à abertura
+                # Virgindade: O preço nunca TOCOU (Low) o nível NOS DIAS POSTERIORES à abertura
                 after_d = daily_data[daily_data.index > d_time]
                 is_virgin = True
                 if not after_d.empty:
-                    min_close_after = float(after_d['Close'].min())
-                    if min_close_after < (d_open * 0.999):
+                    min_low_after = float(after_d['Low'].min())
+                    if min_low_after < (d_open * 0.999):
                         is_virgin = False
                 
                 if is_virgin and current_price > d_open:
                     dist = ((current_price - d_open) / d_open) * 100
-                    if dist <= 15.0:
+                    if dist <= 12.0:
                         label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
                         supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
 
@@ -204,17 +204,17 @@ class Scanner:
                 w_row = week_df.iloc[0]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
-                # Virgindade: O preço nunca FECHOU abaixo do nível NOS DIAS POSTERIORES ao dia da abertura
+                # Virgindade: O preço nunca TOCOU (Low) o nível NOS DIAS POSTERIORES ao dia da abertura
                 after_w = daily_data[daily_data.index > w_time]
                 is_virgin = True
                 if not after_w.empty:
-                    min_close_after = float(after_w['Close'].min())
-                    if min_close_after < (w_open * 0.999):
+                    min_low_after = float(after_w['Low'].min())
+                    if min_low_after < (w_open * 0.999):
                         is_virgin = False
                 
                 if is_virgin and current_price > w_open:
                     dist = ((current_price - w_open) / w_open) * 100
-                    if dist <= 15.0:
+                    if dist <= 12.0:
                         date_str = w_time.strftime("%d/%m")
                         label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
                         supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
