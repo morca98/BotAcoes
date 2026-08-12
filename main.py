@@ -145,10 +145,12 @@ class StockBot:
         
         support_msg = ""
         if s.get('key_supports'):
-            support_msg = "🛡️ *Suportes Próximos (Ant.):*\n"
-            for sup in s['key_supports']:
-                tag = " (Virgem 🆕)" if sup['virgin'] else " (Testado 🛡️)"
-                support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%){tag}\n"
+            # Já filtramos para ter apenas virgens no scanner, mas garantimos aqui também
+            virgin_supports = [sup for sup in s['key_supports'] if sup.get('virgin')]
+            if virgin_supports:
+                support_msg = "🛡️ *Suportes Virgens Próximos:*\n"
+                for sup in virgin_supports:
+                    support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%)\n"
 
         return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
                 f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"

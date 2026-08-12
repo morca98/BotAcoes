@@ -215,36 +215,32 @@ class Scanner:
             h1.index = pd.to_datetime(h1.index)
 
             # Verificar PDO (Previous Day Open)
+            # SÓ ADICIONAR SE FOR VIRGEM
             after_pdo = h1[h1.index >= pdo_time]
-            is_pdo_virgin = False
             if not after_pdo.empty:
                 min_since_pdo = float(after_pdo['Low'].min())
-                is_pdo_virgin = min_since_pdo >= (pdo * 0.999)
-            
-            if current_price > pdo:
-                dist = ((current_price - pdo) / pdo) * 100
-                supports.append({
-                    "type": "Diária (Ant.)", 
-                    "price": round(pdo, 2), 
-                    "dist": round(dist, 2),
-                    "virgin": is_pdo_virgin
-                })
+                if min_since_pdo >= (pdo * 0.999) and current_price > pdo:
+                    dist = ((current_price - pdo) / pdo) * 100
+                    supports.append({
+                        "type": "Diária (Ant.)", 
+                        "price": round(pdo, 2), 
+                        "dist": round(dist, 2),
+                        "virgin": True
+                    })
 
             # Verificar PWO (Previous Week Open)
+            # SÓ ADICIONAR SE FOR VIRGEM
             after_pwo = h1[h1.index >= pwo_time]
-            is_pwo_virgin = False
             if not after_pwo.empty:
                 min_since_pwo = float(after_pwo['Low'].min())
-                is_pwo_virgin = min_since_pwo >= (pwo * 0.999)
-                
-            if current_price > pwo:
-                dist = ((current_price - pwo) / pwo) * 100
-                supports.append({
-                    "type": "Semanal (Ant.)", 
-                    "price": round(pwo, 2), 
-                    "dist": round(dist, 2),
-                    "virgin": is_pwo_virgin
-                })
+                if min_since_pwo >= (pwo * 0.999) and current_price > pwo:
+                    dist = ((current_price - pwo) / pwo) * 100
+                    supports.append({
+                        "type": "Semanal (Ant.)", 
+                        "price": round(pwo, 2), 
+                        "dist": round(dist, 2),
+                        "virgin": True
+                    })
         except Exception as e:
             logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
             
