@@ -169,25 +169,34 @@ class Scanner:
         supports = []
         try:
             tk = yf.Ticker(ticker)
-            # Obter dados diários para identificar velas fechadas
+            # Obter dados diários (1 mês é suficiente)
             daily_data = tk.history(period="1mo", interval="1d")
-            if len(daily_data) < 5: return supports
+            if len(daily_data) < 10: return supports
             
-            # Se o mercado estiver aberto, o último item [-1] é o dia atual (não fechado)
-            # O último dia fechado é o penúltimo [-2]
+            daily_data.index = pd.to_datetime(daily_data.index)
+            
+            # 1. Abertura Diária Anterior (PDO)
+            # Se hoje é dia de negociação e o mercado está aberto, o último índice é hoje.
+            # O dia anterior fechado é o dia útil imediatamente anterior.
             pdo_row = daily_data.iloc[-2]
             pdo = float(pdo_row['Open'])
             pdo_time = pdo_row.name
             
-            # Abertura Semanal Anterior (PWO)
-            # Resample para semanas (iniciando segunda-feira)
-            weekly_data = daily_data.resample('W-MON').agg({'Open': 'first', 'Low': 'min'})
-            if len(weekly_data) < 2: return supports
-            pwo_row = weekly_data.iloc[-2] # A semana anterior completa
+            # 2. Abertura Semanal Anterior (PWO)
+            # Segunda-feira desta semana
+            last_monday = daily_data.index[-1] - pd.Timedelta(days=daily_data.index[-1].weekday())
+            # Segunda-feira da semana passada
+            prev_monday = last_monday - pd.Timedelta(days=7)
+            
+            # Encontrar a primeira vela disponível na semana passada (geralmente segunda-feira)
+            pwo_df = daily_data[daily_data.index.date >= prev_monday.date()]
+            if pwo_df.empty: return supports
+            
+            pwo_row = pwo_df.iloc[0]
             pwo = float(pwo_row['Open'])
             pwo_time = pwo_row.name
 
-            # Obter dados intraday para verificar se foi testado (desde a abertura da semana anterior)
+            # Obter dados intraday para verificar se foi testado (desde a abertura da semana passada)
             h1 = h1_df
             if h1 is None or h1.empty or h1.index[0] > pwo_time:
                 h1 = tk.history(start=pwo_time, interval="1h")
@@ -195,7 +204,7 @@ class Scanner:
             if h1.empty: return supports
             h1.index = pd.to_datetime(h1.index)
 
-            # 1. Verificar PDO (Previous Day Open)
+            # Verificar PDO (Previous Day Open)
             after_pdo = h1[h1.index > pdo_time]
             is_pdo_virgin = False
             if not after_pdo.empty:
@@ -211,7 +220,7 @@ class Scanner:
                     "virgin": is_pdo_virgin
                 })
 
-            # 2. Verificar PWO (Previous Week Open)
+            # Verificar PWO (Previous Week Open)
             after_pwo = h1[h1.index > pwo_time]
             is_pwo_virgin = False
             if not after_pwo.empty:
