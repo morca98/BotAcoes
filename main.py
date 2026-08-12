@@ -73,9 +73,6 @@ class StockBot:
             try:
                 res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
                 if res:
-                    # Adicionar suportes virgens apenas para os finalistas
-                    supports = await loop.run_in_executor(None, self.scanner.get_untested_supports, ticker, res['price'])
-                    res['untested_supports'] = supports
                     current_signals[ticker] = res
             except:
                 continue
@@ -140,10 +137,11 @@ class StockBot:
         break_status = "🚀 *ROMPIMENTO 2H!*" if s['breakout_2h'] else ""
         
         support_msg = ""
-        if s.get('untested_supports'):
-            support_msg = "🛡️ *Suporte Próximo (Não Testado):*\n"
-            for sup in s['untested_supports']:
-                support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%)\n"
+        if s.get('key_supports'):
+            support_msg = "🛡️ *Suportes Próximos:*\n"
+            for sup in s['key_supports']:
+                virgin_tag = " (Virgem 🆕)" if sup['virgin'] else ""
+                support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%){virgin_tag}\n"
 
         return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
                 f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
@@ -206,14 +204,15 @@ class StockBot:
                     
                     current_price = float(current_data['Close'].iloc[-1])
                     
-                    # Verificar suportes virgens
-                    supports = await loop.run_in_executor(None, self.scanner.get_untested_supports, ticker, current_price)
+                    # Verificar suportes (DO/WO)
+                    supports = await loop.run_in_executor(None, self.scanner.get_key_supports, ticker, current_price)
                     
                     for sup in supports:
-                        if sup['dist'] <= 0.2:
+                        # Notificar apenas se for VIRGEM e estiver muito próximo (< 0.2%)
+                        if sup['virgin'] and sup['dist'] <= 0.2:
                             touch_key = f"{ticker}_{sup['type']}_{sup['price']}"
                             if touch_key not in self.notified_touches:
-                                alert = (f"🎯 *ZONA DE COMPRA - Suporte Tocado! (< 0.2%)*\n"
+                                alert = (f"🎯 *ZONA DE COMPRA - Suporte Virgem Tocado! (< 0.2%)*\n"
                                          f"🔥 *{ticker}* @ `${current_price}` encostou em: *{sup['type']} Open (${sup['price']})*\n"
                                          f"   RS/Setor: `{s['rs_sector']}` | RSI D: `{s['rsi_daily']}`")
                                 await self.send_direct_msg(alert)

@@ -165,39 +165,50 @@ class Scanner:
             return True
         return False
 
-    def get_untested_supports(self, ticker, current_price):
-        """Calcula Abertura Diária e Semanal e verifica se são suportes virgens."""
+    def get_key_supports(self, ticker, current_price, h1_df=None):
+        """Calcula Abertura Diária e Semanal e identifica suportes virgens."""
         supports = []
         try:
-            # Obter dados de 1 hora para WO e DO
-            h1_data = yf.download(ticker, period="7d", interval="1h", progress=False, group_by='ticker')
-            if h1_data.empty: return supports
+            df = h1_df
+            if df is None or df.empty:
+                h1_data = yf.download(ticker, period="7d", interval="1h", progress=False, group_by='ticker')
+                if h1_data.empty: return supports
+                df = h1_data[ticker] if isinstance(h1_data.columns, pd.MultiIndex) else h1_data
             
-            df = h1_data[ticker] if isinstance(h1_data.columns, pd.MultiIndex) else h1_data
             df.index = pd.to_datetime(df.index)
 
-            # 1. Abertura Semanal (WO) - Primeira vela da semana (segunda-feira ou primeiro dia útil)
+            # 1. Abertura Semanal (WO)
             start_of_week_date = df.index[-1] - pd.Timedelta(days=df.index[-1].weekday())
             start_of_week = df[df.index.date >= start_of_week_date.date()]
             if not start_of_week.empty:
                 wo = float(start_of_week['Open'].iloc[0])
-                # Virgem se a mínima desde a abertura for >= WO (com margem mínima)
                 min_since_wo = float(start_of_week['Low'].min())
-                if min_since_wo >= (wo * 0.999) and current_price > wo:
+                is_virgin = min_since_wo >= (wo * 0.999)
+                if current_price > wo:
                     dist = ((current_price - wo) / wo) * 100
-                    supports.append({"type": "Semanal", "price": round(wo, 2), "dist": round(dist, 2)})
+                    supports.append({
+                        "type": "Semanal", 
+                        "price": round(wo, 2), 
+                        "dist": round(dist, 2),
+                        "virgin": is_virgin
+                    })
 
-            # 2. Abertura Diária (DO) - Primeira vela de hoje
+            # 2. Abertura Diária (DO)
             start_of_day = df[df.index.date == df.index[-1].date()]
             if not start_of_day.empty:
                 do = float(start_of_day['Open'].iloc[0])
-                # Virgem se a mínima de hoje for >= DO
                 min_since_do = float(start_of_day['Low'].min())
-                if min_since_do >= (do * 0.999) and current_price > do:
+                is_virgin = min_since_do >= (do * 0.999)
+                if current_price > do:
                     dist = ((current_price - do) / do) * 100
-                    supports.append({"type": "Diária", "price": round(do, 2), "dist": round(dist, 2)})
+                    supports.append({
+                        "type": "Diária", 
+                        "price": round(do, 2), 
+                        "dist": round(dist, 2),
+                        "virgin": is_virgin
+                    })
         except Exception as e:
-            logger.error(f"Erro ao calcular suportes virgens para {ticker}: {e}")
+            logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
             
         return supports
 
@@ -268,6 +279,9 @@ class Scanner:
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
+            # Obter suportes usando o h1 já carregado
+            supports = self.get_key_supports(ticker, current_price, h1)
+
             # Validação final para evitar NaN no relatório
             metrics = [current_price, rsi_daily, rsi_h1, atr_pct, relative_strength, dist_ema20]
             if any(np.isnan(m) or np.isinf(m) for m in metrics):
@@ -292,6 +306,7 @@ class Scanner:
                 "div_bullish": div_bullish,
                 "is_vcp": is_vcp,
                 "breakout_2h": breakout_2h,
+                "key_supports": supports,
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
         except Exception as e:
