@@ -67,22 +67,37 @@ class StockBot:
         # 2. Filtrar por Top Liquidez (500 ativos)
         filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 500)
         
-        # 3. Analisar cada ativo
+        # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
         current_signals = {}
         total_to_analyze = len(filtered_universe)
-        logger.info(f"A analisar {total_to_analyze} ativos...")
+        logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")
         
-        for idx, ticker in enumerate(filtered_universe):
-            try:
-                if idx % 50 == 0 and idx > 0:
-                    logger.info(f"Progresso: {idx}/{total_to_analyze} ativos analisados...")
-                
-                res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
-                if res:
-                    current_signals[ticker] = res
-            except Exception as e:
-                logger.error(f"Erro ao analisar {ticker}: {e}")
-                continue
+        semaphore = asyncio.Semaphore(15) # Máximo de 15 análises simultâneas
+        progress_msg = None
+        if is_manual:
+            progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text="⏳ Progresso: 0%")
+
+        async def semi_analyze(ticker, index):
+            async with semaphore:
+                try:
+                    res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
+                    if index % 50 == 0 and progress_msg:
+                        pct = int((index / total_to_analyze) * 100)
+                        await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({index}/{total_to_analyze})")
+                    return ticker, res
+                except Exception as e:
+                    logger.error(f"Erro em {ticker}: {e}")
+                    return ticker, None
+
+        tasks = [semi_analyze(t, i) for i, t in enumerate(filtered_universe)]
+        results = await asyncio.gather(*tasks)
+        
+        for ticker, res in results:
+            if res:
+                current_signals[ticker] = res
+        
+        if progress_msg:
+            await progress_msg.delete()
 
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
         current_tickers = set(current_signals.keys())

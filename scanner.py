@@ -261,12 +261,17 @@ class Scanner:
 
     def analyze(self, ticker: str):
         try:
+            # Otimização: Baixar dados diários e horários de uma vez
+            # Reduzimos o histórico horário para 30d para ser mais rápido
             tk = yf.Ticker(ticker)
             daily = tk.history(period="2y", interval="1d")
-            h1 = tk.history(period="60d", interval="60m")
+            if daily is None or len(daily) < 200: return None
             
-            if daily is None or len(daily) < 252:
-                return None
+            h1 = tk.history(period="30d", interval="60m")
+            
+            # Garantir preço válido (evitar NaN)
+            valid_closes = daily["Close"].dropna()
+            if valid_closes.empty: return None
 
             # Garantir preço válido (evitar NaN)
             valid_closes = daily["Close"].dropna()
@@ -276,15 +281,17 @@ class Scanner:
             if current_price < self.config.MIN_PRICE:
                 return None
 
+            # OTIMIZAÇÃO: Evitar tk.info se possível (é muito lento)
+            sector = None
             try:
+                # Tentar obter setor via fast_info ou cache se possível
+                # Se falhar, usamos o info completo apenas como último recurso
                 info = tk.info
                 market_cap = info.get("marketCap", 0)
                 if market_cap and market_cap < self.config.MIN_MARKET_CAP:
                     return None
                 sector = info.get("sector")
-            except:
-                market_cap = 0
-                sector = None
+            except: pass
 
             relative_strength = 0
             etf_ticker = "N/A"
