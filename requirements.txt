@@ -5,3 +5,5 @@ numpy
 python-dotenv
 requests
 pytz
+lxml
+html5lib

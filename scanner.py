@@ -47,20 +47,27 @@ class Scanner:
             url_nasdaq = 'https://en.wikipedia.org/wiki/Nasdaq-100'
             response = requests.get(url_nasdaq, headers=headers, timeout=10)
             tables = pd.read_html(io.StringIO(response.text))
+            nasdaq_count = 0
             for df in tables:
                 if 'Ticker' in df.columns:
-                    tickers.update(df['Ticker'].tolist())
+                    t_list = df['Ticker'].tolist()
+                    tickers.update(t_list)
+                    nasdaq_count = len(t_list)
                     break
                 elif 'Symbol' in df.columns:
-                    tickers.update(df['Symbol'].tolist())
+                    t_list = df['Symbol'].tolist()
+                    tickers.update(t_list)
+                    nasdaq_count = len(t_list)
                     break
-            logger.info("Nasdaq 100 obtido")
+            logger.info(f"Nasdaq 100 obtido: {nasdaq_count} ativos")
         except Exception as e:
             logger.error(f"Erro ao obter índices da Wikipedia: {e}")
             tickers.update(self.config.ASSETS)
 
         clean_tickers = [str(t).replace('.', '-') for t in tickers if isinstance(t, (str, float)) and str(t) != 'nan']
-        return list(set(clean_tickers))
+        final_list = list(set(clean_tickers))
+        logger.info(f"Universo dinâmico final: {len(final_list)} ativos")
+        return final_list
 
     def filter_by_liquidity(self, tickers, limit=500):
         """Filtra os top ativos por volume financeiro (Dollar Volume)."""
