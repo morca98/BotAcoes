@@ -170,73 +170,53 @@ class Scanner:
         """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás)."""
         supports = []
         try:
+            if np.isnan(current_price): return supports
             tk = yf.Ticker(ticker)
             daily_data = tk.history(period="18mo", interval="1d")
             if len(daily_data) < 20: return supports
             daily_data.index = pd.to_datetime(daily_data.index)
             
-            # 1. Abertura Diária (Hoje e Ontem)
-            # Verificar os últimos 2 dias úteis
-            for i in range(1, 3):
+            # 1. Abertura Diária (Últimos 3 dias úteis)
+            for i in range(1, 4):
                 row = daily_data.iloc[-i]
                 d_open, d_time = float(row['Open']), row.name
-                
-                # Virgindade: Mínima desde a abertura (com tolerância de 0.1%)
-                # Para o dia atual, verificamos o intraday se possível
                 after_d = daily_data[daily_data.index >= d_time]
-                min_since_d = float(after_d['Low'].min())
-                
-                if min_since_d >= (d_open * 0.999) and current_price > d_open:
-                    dist = ((current_price - d_open) / d_open) * 100
-                    if dist <= 10.0:
-                        label = "Diária (Hoje)" if i == 1 else "Diária (Ant.)"
-                        supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
+                if not after_d.empty:
+                    # Virgindade baseada no FECHO (Close)
+                    min_close = float(after_d['Close'].min())
+                    if min_close >= (d_open * 0.999) and current_price > d_open:
+                        dist = ((current_price - d_open) / d_open) * 100
+                        if dist <= 10.0:
+                            label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
+                            supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
 
             # 2. Aberturas Semanais (Esta semana + 52 semanas atrás)
             last_monday = daily_data.index[-1] - pd.Timedelta(days=daily_data.index[-1].weekday())
-            
-            for i in range(0, 53): # 0 é esta semana, 1-52 são semanas passadas
+            for i in range(0, 53):
                 target_monday = last_monday - pd.Timedelta(days=7 * i)
                 week_df = daily_data[daily_data.index.date >= target_monday.date()]
                 if week_df.empty: continue
-                
                 w_row = week_df.iloc[0]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
-                # Virgindade: A regra de ouro é ignorar a mínima do PRÓPRIO dia da abertura
-                # se o preço fechou acima e nunca mais voltou lá nos dias seguintes.
-                after_w_days = daily_data[daily_data.index > w_time] # Dias POSTERIORES
-                
-                is_virgin = True
-                if not after_w_days.empty:
-                    min_after = float(after_w_days['Low'].min())
-                    if min_after < (w_open * 0.999):
-                        is_virgin = False
-                
-                # Também checamos se o próprio dia da abertura não "atropelou" o nível demais
-                if float(w_row['Low']) < (w_open * 0.995): # Tolerância maior no dia da abertura (0.5%)
-                    is_virgin = False
-
-                if is_virgin and current_price > w_open:
-                    dist = ((current_price - w_open) / w_open) * 100
-                    if dist <= 10.0:
-                        date_str = w_time.strftime("%d/%m")
-                        label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
-                        supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
+                # Virgindade Semanal: Nunca FECHOU abaixo do nível da semana
+                after_w = daily_data[daily_data.index >= w_time]
+                if not after_w.empty:
+                    min_close = float(after_w['Close'].min())
+                    if min_close >= (w_open * 0.999) and current_price > w_open:
+                        dist = ((current_price - w_open) / w_open) * 100
+                        if dist <= 10.0:
+                            date_str = w_time.strftime("%d/%m")
+                            label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
+                            supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
             
-            # Remover duplicados (ex: se o Diário de Hoje for igual ao Semanal Atual)
             unique_supports = {}
             for s in supports:
-                if s['price'] not in unique_supports or len(s['type']) < len(unique_supports[s['price']]['type']):
+                if s['price'] not in unique_supports:
                     unique_supports[s['price']] = s
-            
-            # Ordenar por proximidade e limitar aos 5 mais relevantes
-            sorted_supports = sorted(unique_supports.values(), key=lambda x: x['dist'])[:5]
-            return sorted_supports
-                            
+            return sorted(unique_supports.values(), key=lambda x: x['dist'])[:5]
         except Exception as e:
             logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
-            
         return supports
 
     def analyze(self, ticker: str):
@@ -248,7 +228,11 @@ class Scanner:
             if daily is None or len(daily) < 252:
                 return None
 
-            current_price = float(daily["Close"].iloc[-1])
+            # Garantir preço válido (evitar NaN)
+            valid_closes = daily["Close"].dropna()
+            if valid_closes.empty: return None
+            current_price = float(valid_closes.iloc[-1])
+            
             if current_price < self.config.MIN_PRICE:
                 return None
 
