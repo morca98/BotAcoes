@@ -113,20 +113,41 @@ class StockBot:
             else:
                 # Ordenar por score de ranking (descendente)
                 sorted_signals = sorted(current_signals.values(), key=get_rank_score, reverse=True)
+                
+                # OTIMIZAÇÃO: Calcular suportes APENAS para os finalistas do ranking
                 for s in sorted_signals:
+                    try:
+                        ticker = s['ticker']
+                        current_price = s['price']
+                        # Executar cálculo pesado de suportes em executor
+                        s['key_supports'] = await loop.run_in_executor(None, self.scanner.get_key_supports, ticker, current_price)
+                    except Exception as e:
+                        logger.error(f"Erro ao calcular suportes finais para {s['ticker']}: {e}")
+                        s['key_supports'] = []
+                    
                     msg += self._format_signal(s)
         else:
             if new_tickers or new_breakouts:
                 msg = f"🔔 *Atualização Importante* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
                 if new_tickers:
-                    msg += "\n🌟 *Novos Ativos na Lista (Ordenados por Força):*\n"
+                    msg += "🌟 *Novos Ativos na Lista (Ordenados por Força):*\n"
                     sorted_new = sorted([current_signals[t] for t in new_tickers], key=get_rank_score, reverse=True)
                     for s in sorted_new:
+                        try:
+                            # Calcular suportes apenas para os novos ativos
+                            s['key_supports'] = await loop.run_in_executor(None, self.scanner.get_key_supports, s['ticker'], s['price'])
+                        except:
+                            s['key_supports'] = []
                         msg += self._format_signal(s)
                 if new_breakouts:
                     msg += "\n🚀 *Rompimentos 2h Detetados:*\n"
                     sorted_breakouts = sorted([current_signals[t] for t in new_breakouts], key=get_rank_score, reverse=True)
                     for s in sorted_breakouts:
+                        try:
+                            s['key_supports'] = await loop.run_in_executor(None, self.scanner.get_key_supports, s['ticker'], s['price'])
+                        except:
+                            s['key_supports'] = []
+                            
                         if s['ticker'] in new_tickers:
                             msg += f"🔹 *{s['ticker']}* também confirmou rompimento!\n"
                         else:

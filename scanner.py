@@ -166,7 +166,7 @@ class Scanner:
             return True
         return False
 
-    def get_key_supports(self, ticker, current_price, h1_df=None):
+    def get_key_supports(self, ticker, current_price):
         """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás)."""
         supports = []
         try:
@@ -180,15 +180,20 @@ class Scanner:
             for i in range(1, 4):
                 row = daily_data.iloc[-i]
                 d_open, d_time = float(row['Open']), row.name
-                after_d = daily_data[daily_data.index >= d_time]
+                
+                # Virgindade: O preço nunca tocou o nível NOS DIAS POSTERIORES à abertura
+                after_d = daily_data[daily_data.index > d_time]
+                is_virgin = True
                 if not after_d.empty:
-                    # Virgindade baseada no FECHO (Close) - Mais fiável para suportes institucionais
-                    min_close = float(after_d['Close'].min())
-                    if min_close >= (d_open * 0.999) and current_price > d_open:
-                        dist = ((current_price - d_open) / d_open) * 100
-                        if dist <= 10.0:
-                            label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
-                            supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
+                    min_low_after = float(after_d['Low'].min())
+                    if min_low_after < (d_open * 0.999):
+                        is_virgin = False
+                
+                if is_virgin and current_price > d_open:
+                    dist = ((current_price - d_open) / d_open) * 100
+                    if dist <= 10.0:
+                        label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
+                        supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
 
             # 2. Aberturas Semanais (Esta semana + 52 semanas atrás)
             last_monday = daily_data.index[-1] - pd.Timedelta(days=daily_data.index[-1].weekday())
@@ -199,16 +204,20 @@ class Scanner:
                 w_row = week_df.iloc[0]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
-                # Virgindade Semanal: O preço nunca pode ter FECHADO abaixo da abertura da semana
-                after_w = daily_data[daily_data.index >= w_time]
+                # Virgindade: O preço nunca tocou o nível NOS DIAS POSTERIORES ao dia da abertura
+                after_w = daily_data[daily_data.index > w_time]
+                is_virgin = True
                 if not after_w.empty:
-                    min_close = float(after_w['Close'].min())
-                    if min_close >= (w_open * 0.999) and current_price > w_open:
-                        dist = ((current_price - w_open) / w_open) * 100
-                        if dist <= 10.0:
-                            date_str = w_time.strftime("%d/%m")
-                            label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
-                            supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
+                    min_low_after = float(after_w['Low'].min())
+                    if min_low_after < (w_open * 0.999):
+                        is_virgin = False
+                
+                if is_virgin and current_price > w_open:
+                    dist = ((current_price - w_open) / w_open) * 100
+                    if dist <= 10.0:
+                        date_str = w_time.strftime("%d/%m")
+                        label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
+                        supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
             
             unique_supports = {}
             for s in supports:
@@ -290,8 +299,8 @@ class Scanner:
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
-            # Obter suportes usando o h1 já carregado
-            supports = self.get_key_supports(ticker, current_price, h1)
+            # Otimização: Suportes calculados apenas para finalistas no main.py
+            supports = []
 
             # Validação final para evitar NaN no relatório
             metrics = [current_price, rsi_daily, rsi_h1, atr_pct, relative_strength, dist_ema20]
