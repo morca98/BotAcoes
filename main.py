@@ -221,8 +221,9 @@ class StockBot:
                         if sup['virgin'] and sup['dist'] <= 0.2:
                             touch_key = f"{ticker}_{sup['type']}_{sup['price']}"
                             if touch_key not in self.notified_touches:
+                                current_price_fmt = round(current_price, 2)
                                 alert = (f"🎯 *ZONA DE COMPRA - Suporte Virgem Tocado! (< 0.2%)*\n"
-                                         f"🔥 *{ticker}* @ `${current_price}` encostou em: *{sup['type']} Open (${sup['price']})*\n"
+                                         f"🔥 *{ticker}* @ `${current_price_fmt}` encostou em: *{sup['type']} Open (${sup['price']})*\n"
                                          f"   RS/Setor: `{s['rs_sector']}` | RSI D: `{s['rsi_daily']}`")
                                 await self.send_direct_msg(alert)
                                 self.notified_touches.add(touch_key)
