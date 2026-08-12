@@ -38,33 +38,47 @@ class Scanner:
         return self._sector_data_cache.get(etf_ticker)
 
     def _check_divergence(self, prices, indicator):
-        """Verifica se existe uma divergência bullish (Preço cai, Indicador sobe)."""
         if len(prices) < 20 or len(indicator) < 20:
             return False
-        
-        # Simplificação: comparar as duas últimas mínimas locais
-        # Encontrar índices de mínimas no preço
         p_min1 = prices.iloc[-10:].min()
         p_min2 = prices.iloc[-20:-10].min()
-        
         i_min1 = indicator.iloc[-10:].min()
         i_min2 = indicator.iloc[-20:-10].min()
-        
-        # Divergência Bullish: Preço fez mínima menor, mas indicador fez mínima maior
         if p_min1 < p_min2 and i_min1 > i_min2:
             return True
         return False
 
     def _check_vcp(self, df):
-        """Verifica contração de volatilidade (VCP)."""
         if len(df) < 20:
             return False
-        
         atr_short = self._atr(df, 5).iloc[-1]
         atr_long = self._atr(df, 20).iloc[-1]
-        
-        # Contração: Volatilidade recente é significativamente menor que a média
         if atr_short < (atr_long * 0.75):
+            return True
+        return False
+
+    def _check_breakout_2h(self, h1_df):
+        """Verifica rompimento no tempo gráfico de 2h (usando dados de 1h)."""
+        if len(h1_df) < 20:
+            return False
+        
+        # Resample para 2h para precisão
+        h2_df = h1_df.resample('2h').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last',
+            'Volume': 'sum'
+        }).dropna()
+        
+        if len(h2_df) < 10:
+            return False
+            
+        current_close = h2_df['Close'].iloc[-1]
+        previous_highs_max = h2_df['High'].iloc[-11:-1].max()
+        
+        # Rompimento: Fecho atual acima da máxima das últimas 10 velas de 2h
+        if current_close > previous_highs_max:
             return True
         return False
 
@@ -72,7 +86,7 @@ class Scanner:
         try:
             tk = yf.Ticker(ticker)
             daily = tk.history(period="2y", interval="1d")
-            h4 = tk.history(period="60d", interval="60m")
+            h1 = tk.history(period="60d", interval="60m")
             
             if daily is None or len(daily) < 252:
                 return None
@@ -114,33 +128,34 @@ class Scanner:
             ema200 = float(daily["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
             rsi_daily = float(self._rsi(daily["Close"], 14).iloc[-1])
             
-            if h4 is not None and len(h4) > 14:
-                rsi_4h_series = self._rsi(h4["Close"], 14)
-                rsi_4h = float(rsi_4h_series.iloc[-1])
+            if h1 is not None and len(h1) > 14:
+                rsi_h1_series = self._rsi(h1["Close"], 14)
+                rsi_h1 = float(rsi_h1_series.iloc[-1])
                 
-                # Cálculo MACD 4h
-                exp1 = h4["Close"].ewm(span=12, adjust=False).mean()
-                exp2 = h4["Close"].ewm(span=26, adjust=False).mean()
-                macd_4h = exp1 - exp2
+                # Deteção de Divergência Bullish (4h - aproximado via 1h)
+                exp1 = h1["Close"].ewm(span=12, adjust=False).mean()
+                exp2 = h1["Close"].ewm(span=26, adjust=False).mean()
+                macd_h1 = exp1 - exp2
                 
-                # Deteção de Divergência Bullish (4h)
-                has_div_rsi = self._check_divergence(h4["Close"], rsi_4h_series)
-                has_div_macd = self._check_divergence(h4["Close"], macd_4h)
+                has_div_rsi = self._check_divergence(h1["Close"], rsi_h1_series)
+                has_div_macd = self._check_divergence(h1["Close"], macd_h1)
                 div_bullish = has_div_rsi or has_div_macd
+                
+                # Rompimento 2h
+                breakout_2h = self._check_breakout_2h(h1)
             else:
-                rsi_4h = rsi_daily
+                rsi_h1 = rsi_daily
                 div_bullish = False
+                breakout_2h = False
 
-            # Contração de Volatilidade (VCP) no diário
             is_vcp = self._check_vcp(daily)
-
             atr = float(self._atr(daily, 14).iloc[-1])
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
             # FILTROS DE EXCLUSÃO
             if rsi_daily > self.config.MAX_RSI_DAILY: return None
-            if rsi_4h > self.config.MAX_RSI_4H: return None
+            if rsi_h1 > self.config.MAX_RSI_4H: return None
             if dist_ema20 > self.config.MAX_EMA20_DIST_PCT: return None
             if current_price < ema200: return None
             if ema20 < ema70 or ema70 < ema200: return None
@@ -150,13 +165,14 @@ class Scanner:
                 "ticker": ticker,
                 "price": round(current_price, 2),
                 "rsi_daily": round(rsi_daily, 2),
-                "rsi_4h": round(rsi_4h, 2),
+                "rsi_4h": round(rsi_h1, 2),
                 "ema20": round(ema20, 2),
                 "atr_pct": round(atr_pct, 2),
                 "rs_sector": round(relative_strength, 2),
                 "sector_etf": etf_ticker,
                 "div_bullish": div_bullish,
                 "is_vcp": is_vcp,
+                "breakout_2h": breakout_2h,
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
 

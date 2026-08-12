@@ -27,90 +27,118 @@ class StockBot:
         self.token = os.getenv("TELEGRAM_BOT_TOKEN") or self.config.TELEGRAM_TOKEN
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID") or self.config.TELEGRAM_CHAT_ID
         
+        # Memória para evitar notificações repetitivas
+        self.last_scan_tickers = set()
+        self.active_breakouts = set()
+        
         # Build application
         self.app = ApplicationBuilder().token(self.token).build()
 
     async def send_direct_msg(self, text: str):
         """Envia uma mensagem direta para o chat configurado."""
         try:
-            # Usar o bot da aplicação para enviar mensagens de forma assíncrona
             await self.app.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"Erro ao enviar mensagem: {e}")
 
-    async def run_scan(self):
-        """Executa o scan de mercado para todos os ativos configurados."""
+    async def run_scan(self, is_manual=False):
+        """Executa o scan de mercado e notifica apenas atualizações importantes."""
         logger.info("A iniciar scan de mercado...")
-        signals = []
+        current_signals = {}
         
-        # Obter o loop atual para executar tarefas síncronas num executor
         loop = asyncio.get_running_loop()
         
         for ticker in self.config.ASSETS:
             try:
-                # Executar análise num executor para não bloquear o loop (yf.history é bloqueante)
                 res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
                 if res:
-                    signals.append(res)
+                    current_signals[ticker] = res
             except Exception as e:
                 logger.error(f"Erro ao processar {ticker}: {e}")
                 continue
 
         now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
-        if signals:
-            msg = f"🎯 *Sinais de Compra* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
-            for s in signals:
-                div_status = "✅ Sim" if s['div_bullish'] else "❌ Não"
-                vcp_status = "✅ Sim" if s['is_vcp'] else "❌ Não"
-                msg += (f"🔹 *{s['ticker']}* @ `${s['price']}`\n"
-                        f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
-                        f"   Divergência Bullish (4h): {div_status}\n"
-                        f"   Contração Volat. (VCP): {vcp_status}\n"
-                        f"   ATR%: `{s['atr_pct']}%` | RSI D: `{s['rsi_daily']}`\n\n")
-        else:
-            msg = f"🔍 *Scan concluído* — {now}\nNenhuma ação cumpre os critérios no momento."
+        current_tickers = set(current_signals.keys())
         
-        await self.send_direct_msg(msg)
+        # Identificar atualizações importantes
+        new_tickers = current_tickers - self.last_scan_tickers
+        new_breakouts = {t for t, s in current_signals.items() if s['breakout_2h'] and t not in self.active_breakouts}
+        
+        # Atualizar memória
+        self.last_scan_tickers = current_tickers
+        self.active_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']}
+
+        # Construir mensagem
+        msg = ""
+        if is_manual:
+            msg = f"🔍 *Scan Manual Concluído* — {now}\n"
+            if not current_signals:
+                msg += "Nenhuma ação cumpre os critérios no momento."
+            else:
+                for t, s in current_signals.items():
+                    msg += self._format_signal(s)
+        else:
+            # Notificação automática apenas se houver novidades
+            if new_tickers or new_breakouts:
+                msg = f"🔔 *Atualização Importante* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
+                
+                if new_tickers:
+                    msg += "\n🌟 *Novos Ativos na Lista:*\n"
+                    for t in new_tickers:
+                        msg += self._format_signal(current_signals[t])
+                
+                if new_breakouts:
+                    msg += "\n🚀 *Rompimentos 2h Detetados:*\n"
+                    for t in new_breakouts:
+                        # Se já foi listado em new_tickers, não repetir o sinal completo
+                        if t in new_tickers:
+                            msg += f"🔹 *{t}* também confirmou rompimento!\n"
+                        else:
+                            msg += self._format_signal(current_signals[t])
+            else:
+                logger.info("Scan concluído: Nenhuma atualização importante encontrada.")
+                return
+
+        if msg:
+            await self.send_direct_msg(msg)
+
+    def _format_signal(self, s):
+        """Formata um sinal individual para a mensagem."""
+        div_status = "✅ Sim" if s['div_bullish'] else "❌ Não"
+        vcp_status = "✅ Sim" if s['is_vcp'] else "❌ Não"
+        break_status = "🚀 *ROMPIMENTO 2H!*" if s['breakout_2h'] else ""
+        
+        return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
+                f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
+                f"   Divergência Bullish (4h): {div_status}\n"
+                f"   Contração Volat. (VCP): {vcp_status}\n"
+                f"   ATR%: `{s['atr_pct']}%` | RSI D: `{s['rsi_daily']}`\n\n")
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handler para o comando /start."""
-        await update.message.reply_text("🚀 *Bot de Ações Ativo!*\nUse /scan para análise imediata.")
+        await update.message.reply_text("🚀 *Bot de Monitorização Ativo!*\nScan automático a cada 2h.\nUse /scan para ver a lista atual.")
 
     async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handler para o comando /scan."""
-        await update.message.reply_text("🔍 *A iniciar scan manual...*")
-        await self.run_scan()
+        await update.message.reply_text("🔍 *A iniciar scan completo...*")
+        await self.run_scan(is_manual=True)
 
     async def scheduler_loop(self):
-        """Loop de agendamento para execução diária."""
-        logger.info("Agendamento iniciado (08:00 Europe/Lisbon).")
+        """Loop de agendamento: corre a cada 2 horas."""
+        logger.info("Monitorização contínua iniciada (Intervalo: 2h).")
         while True:
-            now = datetime.now(LISBON_TZ)
-            # Verifica se é 08:00
-            if now.hour == 8 and now.minute == 0:
-                await self.run_scan()
-                # Espera 65 segundos para não disparar várias vezes no mesmo minuto
-                await asyncio.sleep(65)
-            await asyncio.sleep(30)
+            # Executar scan
+            await self.run_scan(is_manual=False)
+            # Esperar 2 horas (7200 segundos)
+            await asyncio.sleep(7200)
 
     async def post_init(self, application):
-        """Função chamada automaticamente após a inicialização do bot."""
-        await self.send_direct_msg("🟢 *Bot Iniciado com Sucesso!*")
-        # Iniciar o loop de agendamento como uma task de background
+        await self.send_direct_msg("🟢 *Bot de Monitorização 2h Iniciado!*")
         asyncio.create_task(self.scheduler_loop())
 
     def run(self):
-        """Inicia o bot em modo polling."""
-        # Handlers
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("scan", self.cmd_scan))
-        
-        # Configurar post_init para startup logic
         self.app.post_init = self.post_init
-        
         logger.info("Bot em polling...")
-        # run_polling é um método síncrono que gere o seu próprio loop de eventos internamente
-        # Isto resolve o erro "RuntimeError: This event loop is already running"
         self.app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
