@@ -84,27 +84,42 @@ class StockBot:
         self.active_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']}
 
         msg = ""
+        
+        # Função para calcular pontuação de ranking
+        def get_rank_score(s):
+            # Peso principal: RS Setorial
+            score = s['rs_sector'] * 10
+            # Bónus por indicadores positivos
+            if s['is_vcp']: score += 5
+            if s['div_bullish']: score += 3
+            if s['breakout_2h']: score += 10
+            return score
+
         if is_manual:
             msg = f"🔍 *Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)* — {now}\n"
             if not current_signals:
                 msg += "Nenhuma ação cumpre os critérios no momento."
             else:
-                for t, s in current_signals.items():
+                # Ordenar por score de ranking (descendente)
+                sorted_signals = sorted(current_signals.values(), key=get_rank_score, reverse=True)
+                for s in sorted_signals:
                     msg += self._format_signal(s)
         else:
             if new_tickers or new_breakouts:
                 msg = f"🔔 *Atualização Importante* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
                 if new_tickers:
-                    msg += "\n🌟 *Novos Ativos na Lista:*\n"
-                    for t in new_tickers:
-                        msg += self._format_signal(current_signals[t])
+                    msg += "\n🌟 *Novos Ativos na Lista (Ordenados por Força):*\n"
+                    sorted_new = sorted([current_signals[t] for t in new_tickers], key=get_rank_score, reverse=True)
+                    for s in sorted_new:
+                        msg += self._format_signal(s)
                 if new_breakouts:
                     msg += "\n🚀 *Rompimentos 2h Detetados:*\n"
-                    for t in new_breakouts:
-                        if t in new_tickers:
-                            msg += f"🔹 *{t}* também confirmou rompimento!\n"
+                    sorted_breakouts = sorted([current_signals[t] for t in new_breakouts], key=get_rank_score, reverse=True)
+                    for s in sorted_breakouts:
+                        if s['ticker'] in new_tickers:
+                            msg += f"🔹 *{s['ticker']}* também confirmou rompimento!\n"
                         else:
-                            msg += self._format_signal(current_signals[t])
+                            msg += self._format_signal(s)
             else:
                 logger.info("Nenhuma atualização importante encontrada.")
                 return

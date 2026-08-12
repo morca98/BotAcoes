@@ -226,9 +226,18 @@ class Scanner:
                 breakout_2h = False
 
             is_vcp = self._check_vcp(daily)
-            atr = float(self._atr(daily, 14).iloc[-1])
+            atr_series = self._atr(daily, 14)
+            if atr_series.empty or np.isnan(atr_series.iloc[-1]):
+                return None
+            
+            atr = float(atr_series.iloc[-1])
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
+
+            # Validação final para evitar NaN no relatório
+            metrics = [current_price, rsi_daily, rsi_h1, atr_pct, relative_strength, dist_ema20]
+            if any(np.isnan(m) or np.isinf(m) for m in metrics):
+                return None
 
             if rsi_daily > self.config.MAX_RSI_DAILY: return None
             if rsi_h1 > self.config.MAX_RSI_4H: return None
