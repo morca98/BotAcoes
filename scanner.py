@@ -191,7 +191,7 @@ class Scanner:
                 
                 if is_virgin and current_price > d_open:
                     dist = ((current_price - d_open) / d_open) * 100
-                    if dist <= 10.0:
+                    if dist <= 15.0:
                         label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
                         supports.append({"type": label, "price": round(d_open, 2), "dist": round(dist, 2), "virgin": True})
 
@@ -214,7 +214,7 @@ class Scanner:
                 
                 if is_virgin and current_price > w_open:
                     dist = ((current_price - w_open) / w_open) * 100
-                    if dist <= 10.0:
+                    if dist <= 15.0:
                         date_str = w_time.strftime("%d/%m")
                         label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
                         supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
