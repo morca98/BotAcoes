@@ -31,6 +31,8 @@ class StockBot:
         # Memória e Watchlist
         self.last_scan_tickers = set()
         self.active_breakouts = set()
+        self.active_signals = {} # Tickers que passaram no último scan
+        self.notified_touches = set() # Evitar spam de toques
         self.user_watchlist = self._load_watchlist()
         
         self.app = ApplicationBuilder().token(self.token).build()
@@ -71,6 +73,9 @@ class StockBot:
             try:
                 res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
                 if res:
+                    # Adicionar suportes virgens apenas para os finalistas
+                    supports = await loop.run_in_executor(None, self.scanner.get_untested_supports, ticker, res['price'])
+                    res['untested_supports'] = supports
                     current_signals[ticker] = res
             except:
                 continue
@@ -82,6 +87,8 @@ class StockBot:
         
         self.last_scan_tickers = current_tickers
         self.active_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']}
+        self.active_signals = current_signals # Guardar para monitorização de toques
+        self.notified_touches = set() # Resetar memória de toques no novo scan
 
         msg = ""
         
@@ -131,9 +138,17 @@ class StockBot:
         div_status = "✅ Sim" if s['div_bullish'] else "❌ Não"
         vcp_status = "✅ Sim" if s['is_vcp'] else "❌ Não"
         break_status = "🚀 *ROMPIMENTO 2H!*" if s['breakout_2h'] else ""
+        
+        support_msg = ""
+        if s.get('untested_supports'):
+            support_msg = "🛡️ *Suporte Próximo (Não Testado):*\n"
+            for sup in s['untested_supports']:
+                support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%)\n"
+
         return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
                 f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
+                f"{support_msg}"
                 f"   ATR%: `{s['atr_pct']}%` | RSI D: `{s['rsi_daily']}`\n\n")
 
     # --- Comandos de Watchlist ---
@@ -172,6 +187,43 @@ class StockBot:
         await update.message.reply_text("🔍 *A iniciar scan completo...*")
         await self.run_scan(is_manual=True)
 
+    async def support_monitor_loop(self):
+        """Monitoriza toques em suporte a cada 5 minutos para os ativos da lista."""
+        logger.info("Monitorização de toques em suporte iniciada (5 min).")
+        while True:
+            try:
+                if not self.active_signals:
+                    await asyncio.sleep(300)
+                    continue
+
+                loop = asyncio.get_running_loop()
+                for ticker, s in list(self.active_signals.items()):
+                    # Obter preço atual rápido
+                    import yfinance as yf
+                    tk = yf.Ticker(ticker)
+                    current_data = tk.history(period="1d", interval="1m")
+                    if current_data.empty: continue
+                    
+                    current_price = float(current_data['Close'].iloc[-1])
+                    
+                    # Verificar suportes virgens
+                    supports = await loop.run_in_executor(None, self.scanner.get_untested_supports, ticker, current_price)
+                    
+                    for sup in supports:
+                        if sup['dist'] <= 0.2:
+                            touch_key = f"{ticker}_{sup['type']}_{sup['price']}"
+                            if touch_key not in self.notified_touches:
+                                alert = (f"🎯 *ZONA DE COMPRA - Suporte Tocado! (< 0.2%)*\n"
+                                         f"🔥 *{ticker}* @ `${current_price}` encostou em: *{sup['type']} Open (${sup['price']})*\n"
+                                         f"   RS/Setor: `{s['rs_sector']}` | RSI D: `{s['rsi_daily']}`")
+                                await self.send_direct_msg(alert)
+                                self.notified_touches.add(touch_key)
+                
+            except Exception as e:
+                logger.error(f"Erro no monitor de suportes: {e}")
+            
+            await asyncio.sleep(300) # Verificar a cada 5 minutos
+
     async def scheduler_loop(self):
         logger.info("Monitorização contínua (2h) com universo dinâmico.")
         while True:
@@ -180,7 +232,11 @@ class StockBot:
 
     async def post_init(self, application):
         await self.send_direct_msg("🟢 *Bot Pro Iniciado!* (Universo Dinâmico Ativo)")
+        # Iniciar scan imediato
+        asyncio.create_task(self.run_scan(is_manual=False))
+        # Iniciar loops de agendamento
         asyncio.create_task(self.scheduler_loop())
+        asyncio.create_task(self.support_monitor_loop())
 
     def run(self):
         self.app.add_handler(CommandHandler("start", self.cmd_start))

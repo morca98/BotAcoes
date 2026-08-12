@@ -154,18 +154,52 @@ class Scanner:
         return False
 
     def _check_breakout_2h(self, h1_df):
-        if len(h1_df) < 20:
-            return False
+        if len(h1_df) < 20: return False
         h2_df = h1_df.resample('2h').agg({
             'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
         }).dropna()
-        if len(h2_df) < 10:
-            return False
+        if len(h2_df) < 10: return False
         current_close = h2_df['Close'].iloc[-1]
         previous_highs_max = h2_df['High'].iloc[-11:-1].max()
         if current_close > previous_highs_max:
             return True
         return False
+
+    def get_untested_supports(self, ticker, current_price):
+        """Calcula Abertura Diária e Semanal e verifica se são suportes virgens."""
+        supports = []
+        try:
+            # Obter dados de 1 hora para WO e DO
+            h1_data = yf.download(ticker, period="7d", interval="1h", progress=False, group_by='ticker')
+            if h1_data.empty: return supports
+            
+            df = h1_data[ticker] if isinstance(h1_data.columns, pd.MultiIndex) else h1_data
+            df.index = pd.to_datetime(df.index)
+
+            # 1. Abertura Semanal (WO) - Primeira vela da semana (segunda-feira ou primeiro dia útil)
+            start_of_week_date = df.index[-1] - pd.Timedelta(days=df.index[-1].weekday())
+            start_of_week = df[df.index.date >= start_of_week_date.date()]
+            if not start_of_week.empty:
+                wo = float(start_of_week['Open'].iloc[0])
+                # Virgem se a mínima desde a abertura for >= WO (com margem mínima)
+                min_since_wo = float(start_of_week['Low'].min())
+                if min_since_wo >= (wo * 0.999) and current_price > wo:
+                    dist = ((current_price - wo) / wo) * 100
+                    supports.append({"type": "Semanal", "price": round(wo, 2), "dist": round(dist, 2)})
+
+            # 2. Abertura Diária (DO) - Primeira vela de hoje
+            start_of_day = df[df.index.date == df.index[-1].date()]
+            if not start_of_day.empty:
+                do = float(start_of_day['Open'].iloc[0])
+                # Virgem se a mínima de hoje for >= DO
+                min_since_do = float(start_of_day['Low'].min())
+                if min_since_do >= (do * 0.999) and current_price > do:
+                    dist = ((current_price - do) / do) * 100
+                    supports.append({"type": "Diária", "price": round(do, 2), "dist": round(dist, 2)})
+        except Exception as e:
+            logger.error(f"Erro ao calcular suportes virgens para {ticker}: {e}")
+            
+        return supports
 
     def analyze(self, ticker: str):
         try:
