@@ -32,6 +32,7 @@ class Scanner:
     def get_dynamic_universe(self):
         """Obtém componentes do S&P 500, Nasdaq 100 e ETFs temáticos com User-Agent para evitar 403."""
         tickers = set(self.THEMATIC_ETFS)
+        tickers.update(self.config.ASSETS) # Garantir que a lista base está sempre presente
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         
         try:
@@ -63,41 +64,53 @@ class Scanner:
 
     def filter_by_liquidity(self, tickers, limit=500):
         """Filtra os top ativos por volume financeiro (Dollar Volume)."""
-        logger.info(f"A filtrar liquidez para {len(tickers)} ativos...")
+        logger.info(f"Iniciando filtro de liquidez para {len(tickers)} ativos (Alvo: {limit})")
+        
+        # Se o universo for pequeno, não filtrar
         if len(tickers) <= limit:
             return tickers
 
         data = []
-        chunk_size = 100
+        # Aumentar o chunk para processar mais rápido
+        chunk_size = 200
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i + chunk_size]
             try:
-                tickers_str = " ".join(chunk)
-                # Obter dados rápidos de 1 dia
-                batch = yf.download(tickers_str, period="1d", group_by='ticker', threads=True, progress=False)
+                # Usar yf.download com parâmetros mais robustos
+                batch = yf.download(chunk, period="5d", interval="1d", group_by='ticker', threads=True, progress=False)
                 
                 for t in chunk:
                     try:
-                        ticker_data = batch[t] if len(chunk) > 1 else batch
+                        # Lidar com diferentes formatos de retorno do yfinance
+                        if isinstance(batch.columns, pd.MultiIndex):
+                            ticker_data = batch[t]
+                        else:
+                            ticker_data = batch
+                            
                         if not ticker_data.empty:
-                            last_close = ticker_data['Close'].iloc[-1]
-                            last_vol = ticker_data['Volume'].iloc[-1]
-                            dollar_vol = last_close * last_vol
-                            if not np.isnan(dollar_vol) and dollar_vol > 0:
-                                data.append({'ticker': t, 'dollar_vol': dollar_vol})
+                            # Tentar obter o valor mais recente não nulo
+                            valid_data = ticker_data.dropna(subset=['Close', 'Volume'])
+                            if not valid_data.empty:
+                                last_close = valid_data['Close'].iloc[-1]
+                                last_vol = valid_data['Volume'].iloc[-1]
+                                dollar_vol = last_close * last_vol
+                                if dollar_vol > 0:
+                                    data.append({'ticker': t, 'dollar_vol': dollar_vol})
                     except:
                         continue
             except Exception as e:
-                logger.error(f"Erro no lote de liquidez: {e}")
+                logger.error(f"Erro ao processar lote de liquidez: {e}")
                 continue
 
         df = pd.DataFrame(data)
-        if df.empty:
-            logger.warning("Filtro de liquidez vazio, a usar fallback.")
+        logger.info(f"Dados de liquidez obtidos para {len(df)} ativos.")
+        
+        if len(df) < (limit / 2):
+            logger.warning("Poucos dados de liquidez obtidos. Retornando universo original limitado.")
             return tickers[:limit]
             
         top_tickers = df.sort_values(by='dollar_vol', ascending=False).head(limit)['ticker'].tolist()
-        logger.info(f"Liquidez filtrada: {len(top_tickers)} ativos selecionados.")
+        logger.info(f"Filtro concluído. {len(top_tickers)} ativos selecionados.")
         return top_tickers
 
     def _get_sector_etf_data(self, sector_name: str):
