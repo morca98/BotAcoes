@@ -6,27 +6,48 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class Scanner:
+    SECTOR_ETFS = {
+        "Technology": "XLK",
+        "Financial Services": "XLF",
+        "Healthcare": "XLV",
+        "Consumer Cyclical": "XLY",
+        "Energy": "XLE",
+        "Industrials": "XLI",
+        "Consumer Defensive": "XLP",
+        "Utilities": "XLU",
+        "Real Estate": "XLRE",
+        "Basic Materials": "XLB",
+        "Communication Services": "XLC"
+    }
+
     def __init__(self, config):
         self.config = config
-        self._spy_data = None
+        self._sector_data_cache = {}
 
-    def _get_spy_data(self):
-        """Obtém dados do SPY para comparação de força relativa."""
-        if self._spy_data is None:
+    def _get_sector_etf_data(self, sector_name: str):
+        """Obtém dados do ETF correspondente ao setor para comparação de força relativa."""
+        etf_ticker = self.SECTOR_ETFS.get(sector_name)
+        if not etf_ticker:
+            return None
+            
+        if etf_ticker not in self._sector_data_cache:
             try:
-                spy = yf.Ticker("SPY")
-                self._spy_data = spy.history(period="1y", interval="1d")
+                etf = yf.Ticker(etf_ticker)
+                # Obter dados de 1 ano para performance anual
+                self._sector_data_cache[etf_ticker] = etf.history(period="2y", interval="1d")
             except Exception as e:
-                logger.error(f"Erro ao obter dados do SPY: {e}")
-        return self._spy_data
+                logger.error(f"Erro ao obter dados do ETF {etf_ticker}: {e}")
+                return None
+        return self._sector_data_cache.get(etf_ticker)
 
     def analyze(self, ticker: str):
         try:
             tk = yf.Ticker(ticker)
-            daily = tk.history(period="1y", interval="1d")
-            h4 = tk.history(period="60d", interval="60m") # aproximação de 4h via 1h ou diário
+            # Aumentar para 2 anos para garantir que temos 1 ano completo de dados após alinhamento
+            daily = tk.history(period="2y", interval="1d")
+            h4 = tk.history(period="60d", interval="60m")
             
-            if daily is None or len(daily) < 200:
+            if daily is None or len(daily) < 252:
                 return None
 
             current_price = float(daily["Close"].iloc[-1])
@@ -45,35 +66,40 @@ class Scanner:
             if dollar_volume < self.config.MIN_DOLLAR_VOLUME:
                 return None
 
-            # 4. Capitalização > 2B USD
+            # 4. Capitalização e Setor
             try:
                 info = tk.info
                 market_cap = info.get("marketCap", 0)
                 if market_cap and market_cap < self.config.MIN_MARKET_CAP:
                     return None
+                sector = info.get("sector")
             except:
                 market_cap = 0
+                sector = None
 
-            # --- CÁLCULO DE FORÇA RELATIVA (RS) VS SPY ---
-            spy_daily = self._get_spy_data()
-            if spy_daily is not None and len(spy_daily) >= 20:
-                # Alinhamos os dados para garantir que comparamos as mesmas datas
-                combined = pd.DataFrame({
-                    'ticker': daily['Close'],
-                    'spy': spy_daily['Close']
-                }).dropna()
+            # --- CÁLCULO DE FORÇA RELATIVA (RS) VS SETOR (1 ANO) ---
+            relative_strength = 0
+            etf_ticker = "N/A"
+            
+            if sector:
+                sector_daily = self._get_sector_etf_data(sector)
+                etf_ticker = self.SECTOR_ETFS.get(sector, "N/A")
                 
-                if len(combined) >= 20:
-                    # RS = (Preço_Atual / Preço_20d_atrás) / (SPY_Atual / SPY_20d_atrás)
-                    ticker_perf = combined['ticker'].iloc[-1] / combined['ticker'].iloc[-20]
-                    spy_perf = combined['spy'].iloc[-1] / combined['spy'].iloc[-20]
-                    relative_strength = ticker_perf / spy_perf
-                else:
-                    relative_strength = 0
-            else:
-                relative_strength = 0
-
-            # Filtro: RS vs SPY > 1
+                if sector_daily is not None and len(sector_daily) >= 252:
+                    # Alinhamos os dados para garantir que comparamos as mesmas datas
+                    combined = pd.DataFrame({
+                        'ticker': daily['Close'],
+                        'sector': sector_daily['Close']
+                    }).dropna()
+                    
+                    if len(combined) >= 252:
+                        # Performance 1 ano (aprox 252 dias úteis)
+                        # RS = (Preço_Atual / Preço_1ano_atrás) / (Setor_Atual / Setor_1ano_atrás)
+                        ticker_perf = combined['ticker'].iloc[-1] / combined['ticker'].iloc[-252]
+                        sector_perf = combined['sector'].iloc[-1] / combined['sector'].iloc[-252]
+                        relative_strength = ticker_perf / sector_perf
+            
+            # Filtro: RS vs Setor > 1 (Performance do último ano)
             if relative_strength <= 1.0:
                 return None
 
@@ -84,41 +110,26 @@ class Scanner:
 
             rsi_daily = float(self._rsi(daily["Close"], 14).iloc[-1])
             
-            # RSI 4H (usar h4 se disponível, senão diário)
             if h4 is not None and len(h4) > 14:
                 rsi_4h = float(self._rsi(h4["Close"], 14).iloc[-1])
             else:
                 rsi_4h = rsi_daily
 
-            # ATR%
             atr = float(self._atr(daily, 14).iloc[-1])
             atr_pct = (atr / current_price) * 100
-
-            # Distância EMA20 (%)
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
             # --- FILTROS DE ELIMINAÇÃO ---
-            # Eliminar se RSI Diário > MAX (50)
             if rsi_daily > self.config.MAX_RSI_DAILY:
                 return None
-
-            # Eliminar se RSI 4H > MAX (50)
             if rsi_4h > self.config.MAX_RSI_4H:
                 return None
-
-            # Eliminar se EMA20 esticada a mais de 8% (Preço > EMA20 * 1.08)
             if dist_ema20 > self.config.MAX_EMA20_DIST_PCT:
                 return None
-
-            # Eliminar se Preço < EMA200
             if current_price < ema200:
                 return None
-
-            # Eliminar se EMA20 < EMA70 ou EMA70 < EMA200
             if ema20 < ema70 or ema70 < ema200:
                 return None
-
-            # Eliminar se ATR% < 2%
             if atr_pct < self.config.MIN_ATR_PCT:
                 return None
 
@@ -129,7 +140,8 @@ class Scanner:
                 "rsi_4h": round(rsi_4h, 2),
                 "ema20": round(ema20, 2),
                 "atr_pct": round(atr_pct, 2),
-                "rs_spy": round(relative_strength, 2),
+                "rs_sector": round(relative_strength, 2),
+                "sector_etf": etf_ticker,
                 "dollar_volume": round(dollar_volume / 1e6, 2),
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
