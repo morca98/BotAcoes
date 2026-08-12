@@ -15,8 +15,8 @@ class Config:
     MIN_MARKET_CAP = 2_000_000_000     # > 2B USD
     
     # Filtros de Eliminação
-    MAX_RSI_DAILY = 70.0               # Eliminar se RSI Diário > 70
-    MAX_RSI_4H = 60.0                  # Eliminar se RSI 4H > 60
+    MAX_RSI_DAILY = 50.0               # Eliminar se RSI Diário > 50
+    MAX_RSI_4H = 50.0                  # Eliminar se RSI 4H > 50
     MAX_EMA20_DIST_PCT = 8.0           # Eliminar se Preço > EMA20 + 8%
     MIN_ATR_PCT = 2.0                  # Eliminar se ATR% < 2%
     

@@ -98,11 +98,11 @@ class Scanner:
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
             # --- FILTROS DE ELIMINAÇÃO ---
-            # Eliminar se RSI Diário > 70
+            # Eliminar se RSI Diário > MAX (50)
             if rsi_daily > self.config.MAX_RSI_DAILY:
                 return None
 
-            # Eliminar se RSI 4H > 60
+            # Eliminar se RSI 4H > MAX (50)
             if rsi_4h > self.config.MAX_RSI_4H:
                 return None
 
