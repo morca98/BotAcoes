@@ -2,6 +2,7 @@ import logging
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,74 @@ class Scanner:
         "Communication Services": "XLC"
     }
 
+    THEMATIC_ETFS = ["SMH", "XBI", "IBIT", "IWM", "QQQ", "SPY"]
+
     def __init__(self, config):
         self.config = config
         self._sector_data_cache = {}
+        self._universe_cache = None
+
+    def get_dynamic_universe(self):
+        """Obtém componentes do S&P 500, Nasdaq 100 e ETFs temáticos."""
+        tickers = set(self.THEMATIC_ETFS)
+        
+        try:
+            # S&P 500
+            sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+            tickers.update(sp500['Symbol'].tolist())
+            
+            # Nasdaq 100
+            nasdaq100 = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[4]
+            # Wikipedia structure can change, try different index if 4 fails
+            if 'Ticker' in nasdaq100.columns:
+                tickers.update(nasdaq100['Ticker'].tolist())
+            else:
+                nasdaq100 = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[3]
+                tickers.update(nasdaq100['Symbol'].tolist())
+        except Exception as e:
+            logger.error(f"Erro ao obter índices da Wikipedia: {e}")
+            # Fallback para a lista base do config se falhar
+            tickers.update(self.config.ASSETS)
+
+        # Limpeza de símbolos (ex: BRK.B para BRK-B)
+        clean_tickers = [t.replace('.', '-') for t in tickers if isinstance(t, str)]
+        return list(set(clean_tickers))
+
+    def filter_by_liquidity(self, tickers, limit=500):
+        """Filtra os top ativos por volume financeiro (Dollar Volume)."""
+        logger.info(f"A filtrar liquidez para {len(tickers)} ativos...")
+        data = []
+        
+        # Processar em lotes para evitar timeouts
+        chunk_size = 50
+        for i in range(0, len(tickers), chunk_size):
+            chunk = tickers[i:i + chunk_size]
+            try:
+                # Obter apenas o último dia de volume e preço
+                tickers_str = " ".join(chunk)
+                batch = yf.download(tickers_str, period="5d", interval="1d", group_by='ticker', threads=True, progress=False)
+                
+                for t in chunk:
+                    try:
+                        if t in batch and not batch[t].empty:
+                            last_close = batch[t]['Close'].iloc[-1]
+                            last_vol = batch[t]['Volume'].iloc[-1]
+                            dollar_vol = last_close * last_vol
+                            if not np.isnan(dollar_vol):
+                                data.append({'ticker': t, 'dollar_vol': dollar_vol})
+                    except:
+                        continue
+            except Exception as e:
+                logger.error(f"Erro no lote de liquidez: {e}")
+                continue
+
+        df = pd.DataFrame(data)
+        if df.empty:
+            return tickers[:limit]
+            
+        top_tickers = df.sort_values(by='dollar_vol', ascending=False).head(limit)['ticker'].tolist()
+        logger.info(f"Liquidez filtrada: {len(top_tickers)} ativos selecionados.")
+        return top_tickers
 
     def _get_sector_etf_data(self, sector_name: str):
         etf_ticker = self.SECTOR_ETFS.get(sector_name)
@@ -58,26 +124,15 @@ class Scanner:
         return False
 
     def _check_breakout_2h(self, h1_df):
-        """Verifica rompimento no tempo gráfico de 2h (usando dados de 1h)."""
         if len(h1_df) < 20:
             return False
-        
-        # Resample para 2h para precisão
         h2_df = h1_df.resample('2h').agg({
-            'Open': 'first',
-            'High': 'max',
-            'Low': 'min',
-            'Close': 'last',
-            'Volume': 'sum'
+            'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
         }).dropna()
-        
         if len(h2_df) < 10:
             return False
-            
         current_close = h2_df['Close'].iloc[-1]
         previous_highs_max = h2_df['High'].iloc[-11:-1].max()
-        
-        # Rompimento: Fecho atual acima da máxima das últimas 10 velas de 2h
         if current_close > previous_highs_max:
             return True
         return False
@@ -92,7 +147,6 @@ class Scanner:
                 return None
 
             current_price = float(daily["Close"].iloc[-1])
-            
             if current_price < self.config.MIN_PRICE:
                 return None
 
@@ -106,7 +160,6 @@ class Scanner:
                 market_cap = 0
                 sector = None
 
-            # RS Setorial (1 ano)
             relative_strength = 0
             etf_ticker = "N/A"
             if sector:
@@ -122,7 +175,6 @@ class Scanner:
             if relative_strength <= 1.0:
                 return None
 
-            # Indicadores técnicos
             ema20 = float(daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
             ema70 = float(daily["Close"].ewm(span=70, adjust=False).mean().iloc[-1])
             ema200 = float(daily["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
@@ -131,17 +183,12 @@ class Scanner:
             if h1 is not None and len(h1) > 14:
                 rsi_h1_series = self._rsi(h1["Close"], 14)
                 rsi_h1 = float(rsi_h1_series.iloc[-1])
-                
-                # Deteção de Divergência Bullish (4h - aproximado via 1h)
                 exp1 = h1["Close"].ewm(span=12, adjust=False).mean()
                 exp2 = h1["Close"].ewm(span=26, adjust=False).mean()
                 macd_h1 = exp1 - exp2
-                
                 has_div_rsi = self._check_divergence(h1["Close"], rsi_h1_series)
                 has_div_macd = self._check_divergence(h1["Close"], macd_h1)
                 div_bullish = has_div_rsi or has_div_macd
-                
-                # Rompimento 2h
                 breakout_2h = self._check_breakout_2h(h1)
             else:
                 rsi_h1 = rsi_daily
@@ -153,7 +200,6 @@ class Scanner:
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
-            # FILTROS DE EXCLUSÃO
             if rsi_daily > self.config.MAX_RSI_DAILY: return None
             if rsi_h1 > self.config.MAX_RSI_4H: return None
             if dist_ema20 > self.config.MAX_EMA20_DIST_PCT: return None
@@ -175,7 +221,6 @@ class Scanner:
                 "breakout_2h": breakout_2h,
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
-
         except Exception as e:
             logger.error(f"Erro ao analisar {ticker}: {e}")
             return None
