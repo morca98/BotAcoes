@@ -167,40 +167,38 @@ class Scanner:
         return False
 
     def get_key_supports(self, ticker, current_price, h1_df=None):
-        """Calcula suportes virgens de aberturas diárias e semanais (até 4 semanas atrás)."""
+        """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás)."""
         supports = []
         try:
             tk = yf.Ticker(ticker)
-            # Obter dados diários (2 meses para retroceder 4 semanas)
-            daily_data = tk.history(period="2mo", interval="1d")
-            if len(daily_data) < 20: return supports
+            # Obter dados diários (1.5 anos para garantir 52 semanas de histórico)
+            daily_data = tk.history(period="18mo", interval="1d")
+            if len(daily_data) < 252: return supports
             daily_data.index = pd.to_datetime(daily_data.index)
             
-            # Obter dados intraday (H1) para verificar virgindade
-            h1 = h1_df
-            if h1 is None or h1.empty:
-                h1 = tk.history(period="1mo", interval="1h")
-            if h1.empty: return supports
-            h1.index = pd.to_datetime(h1.index)
-
             # 1. Abertura Diária Anterior (PDO)
             now_utc = datetime.now(pytz.UTC)
             last_candle_date = daily_data.index[-1].date()
             pdo_row = daily_data.iloc[-2] if last_candle_date >= now_utc.date() else daily_data.iloc[-1]
             pdo, pdo_time = float(pdo_row['Open']), pdo_row.name
             
-            after_pdo = h1[h1.index >= pdo_time]
-            if not after_pdo.empty:
-                min_since_pdo = float(after_pdo['Low'].min())
+            # Verificar virgindade diária (usando H1 se disponível, senão Daily Lows)
+            h1 = h1_df
+            if h1 is None or h1.empty or h1.index[0] > pdo_time:
+                h1 = tk.history(start=pdo_time, interval="1h")
+            
+            if not h1.empty:
+                h1.index = pd.to_datetime(h1.index)
+                min_since_pdo = float(h1[h1.index >= pdo_time]['Low'].min())
                 if min_since_pdo >= (pdo * 0.999) and current_price > pdo:
                     dist = ((current_price - pdo) / pdo) * 100
                     if dist <= 10.0:
                         supports.append({"type": "Diária (Ant.)", "price": round(pdo, 2), "dist": round(dist, 2), "virgin": True})
 
-            # 2. Aberturas Semanais (retroceder até 4 semanas)
+            # 2. Aberturas Semanais (retroceder até 52 semanas)
             last_monday = daily_data.index[-1] - pd.Timedelta(days=daily_data.index[-1].weekday())
             
-            for i in range(1, 5): # Semanas 1, 2, 3 e 4 atrás
+            for i in range(1, 53): # Até 1 ano atrás
                 target_monday = last_monday - pd.Timedelta(days=7 * i)
                 week_df = daily_data[daily_data.index.date >= target_monday.date()]
                 if week_df.empty: continue
@@ -208,15 +206,20 @@ class Scanner:
                 w_row = week_df.iloc[0]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
-                # Verificar se esta abertura específica é virgem desde que abriu
-                after_w = h1[h1.index >= w_time]
-                if not after_w.empty:
-                    min_since_w = float(after_w['Low'].min())
-                    if min_since_w >= (w_open * 0.999) and current_price > w_open:
-                        dist = ((current_price - w_open) / w_open) * 100
-                        if dist <= 10.0:
-                            label = "Semanal (Ant.)" if i == 1 else f"Semanal (-{i} sem)"
-                            supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
+                # Verificar virgindade usando Daily Lows (muito mais rápido para 1 ano)
+                after_w_daily = daily_data[daily_data.index >= w_time]
+                min_since_w = float(after_w_daily['Low'].min())
+                
+                if min_since_w >= (w_open * 0.999) and current_price > w_open:
+                    dist = ((current_price - w_open) / w_open) * 100
+                    if dist <= 10.0:
+                        # Identificar a semana (ex: 12/08/2025)
+                        date_str = w_time.strftime("%d/%m/%y")
+                        label = f"Semanal ({date_str})"
+                        supports.append({"type": label, "price": round(w_open, 2), "dist": round(dist, 2), "virgin": True})
+            
+            # Ordenar por proximidade e limitar aos 5 suportes mais próximos
+            supports = sorted(supports, key=lambda x: x['dist'])[:5]
                             
         except Exception as e:
             logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
