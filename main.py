@@ -153,6 +153,10 @@ class StockBot:
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🚀 *Bot Pro Ativo!*\nScan 2h: S&P 500 + Nasdaq + ETFs + Watchlist.\n\nComandos:\n/add - Adicionar ativo\n/remove - Remover ativo\n/watchlist - Ver lista\n/scan - Scan manual")
 
+    async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("🔍 *A iniciar scan completo...*")
+        await self.run_scan(is_manual=True)
+
     async def scheduler_loop(self):
         logger.info("Monitorização contínua (2h) com universo dinâmico.")
         while True:
