@@ -172,8 +172,14 @@ class Scanner:
         try:
             if daily_data is None or len(daily_data) < 20: return supports
             
-            # Calcular EMA 200 para confluência
+            # Calcular confluências: EMA 200 e Fibonacci 61.8%
             ema200 = float(daily_data["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
+            
+            # Fibonacci 61.8% (baseado no High/Low do último ano)
+            last_year = daily_data.iloc[-252:] if len(daily_data) >= 252 else daily_data
+            high_52w = float(last_year['High'].max())
+            low_52w = float(last_year['Low'].min())
+            fib_618 = high_52w - (high_52w - low_52w) * 0.618
             
             # 1. Abertura Diária (Últimos 3 dias úteis)
             for i in range(1, 4):
@@ -192,15 +198,18 @@ class Scanner:
                 if is_virgin and current_price > d_open:
                     dist = ((current_price - d_open) / d_open) * 100
                     if dist <= 12.0:
-                        # Verificar confluência com EMA 200 (dentro de 1%)
-                        confluence = abs(d_open - ema200) / ema200 <= 0.01
+                        # Verificar confluências (dentro de 1%)
+                        conf_ema = abs(d_open - ema200) / ema200 <= 0.01
+                        conf_fib = abs(d_open - fib_618) / fib_618 <= 0.01
+                        
                         label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
                         supports.append({
                             "type": label, 
                             "price": round(d_open, 2), 
                             "dist": round(dist, 2), 
                             "virgin": True,
-                            "confluence": confluence
+                            "conf_ema": conf_ema,
+                            "conf_fib": conf_fib
                         })
 
             # 2. Aberturas Semanais (Esta semana + 52 semanas atrás)
@@ -226,8 +235,10 @@ class Scanner:
                 if is_virgin and current_price > w_open:
                     dist = ((current_price - w_open) / w_open) * 100
                     if dist <= 12.0:
-                        # Verificar confluência com EMA 200 (dentro de 1%)
-                        confluence = abs(w_open - ema200) / ema200 <= 0.01
+                        # Verificar confluências (dentro de 1%)
+                        conf_ema = abs(w_open - ema200) / ema200 <= 0.01
+                        conf_fib = abs(w_open - fib_618) / fib_618 <= 0.01
+                        
                         date_str = w_time.strftime("%d/%m")
                         label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
                         supports.append({
@@ -235,7 +246,8 @@ class Scanner:
                             "price": round(w_open, 2), 
                             "dist": round(dist, 2), 
                             "virgin": True,
-                            "confluence": confluence
+                            "conf_ema": conf_ema,
+                            "conf_fib": conf_fib
                         })
             
             unique_supports = {}

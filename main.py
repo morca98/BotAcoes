@@ -152,7 +152,10 @@ class StockBot:
             if virgin_supports:
                 support_msg = "🛡️ *Suportes Virgens Próximos:*\n"
                 for sup in virgin_supports:
-                    conf_text = " (Confluência EMA 200 🎯)" if sup.get('confluence') else ""
+                    confluences = []
+                    if sup.get('conf_ema'): confluences.append("EMA 200 🎯")
+                    if sup.get('conf_fib'): confluences.append("FIB 61.8% 📐")
+                    conf_text = f" (Confluência: {' + '.join(confluences)})" if confluences else ""
                     support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%){conf_text}\n"
 
         return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
@@ -234,7 +237,11 @@ class StockBot:
                                 except: pass
                                 
                                 vol_msg = "✅ *Defesa Institucional (Volume Spike!)*" if vol_spike else "⚠️ Sem pico de volume"
-                                conf_msg = "🎯 *Confluência EMA 200 Detetada!*" if sup.get('confluence') else ""
+                                
+                                conf_list = []
+                                if sup.get('conf_ema'): conf_list.append("EMA 200 🎯")
+                                if sup.get('conf_fib'): conf_list.append("FIB 61.8% 📐")
+                                conf_msg = f"🌟 *Confluência Detetada: {' + '.join(conf_list)}*" if conf_list else ""
                                 
                                 current_price_fmt = round(current_price, 2)
                                 alert = (f"🎯 *ZONA DE COMPRA - Suporte Virgem Tocado! (< 0.2%)*\n"
