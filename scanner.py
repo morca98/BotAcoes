@@ -215,6 +215,12 @@ class Scanner:
             last_year = daily_data.iloc[-252:] if len(daily_data) >= 252 else daily_data
             high_52w = float(last_year['High'].max())
             low_52w = float(last_year['Low'].min())
+            
+            # Filtro de Volatilidade Anual (Amplitude > 40%)
+            annual_range_pct = ((high_52w - low_52w) / low_52w) * 100
+            if annual_range_pct < 40.0:
+                return None # Excluir ativos com baixa volatilidade anual
+                
             fib_618 = high_52w - (high_52w - low_52w) * 0.618
             
             # OTIMIZAÇÃO: Calcular o Low acumulado reverso para verificar virgindade instantaneamente
