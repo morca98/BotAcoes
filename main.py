@@ -55,10 +55,29 @@ class StockBot:
             json.dump(list(self.user_watchlist), f)
 
     async def send_direct_msg(self, text: str):
+        """Envia mensagens longas dividindo-as se necessário e usando HTML para estabilidade."""
         try:
-            await self.app.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="Markdown")
+            # Limite do Telegram é 4096 carateres
+            if len(text) <= 4000:
+                await self.app.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="HTML")
+            else:
+                # Dividir por blocos de ativos (🔹)
+                parts = text.split("🔹")
+                current_msg = parts[0]
+                for part in parts[1:]:
+                    if len(current_msg) + len(part) + 2 > 4000:
+                        await self.app.bot.send_message(chat_id=self.chat_id, text=current_msg, parse_mode="HTML")
+                        current_msg = "🔹" + part
+                    else:
+                        current_msg += "🔹" + part
+                if current_msg:
+                    await self.app.bot.send_message(chat_id=self.chat_id, text=current_msg, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Erro ao enviar mensagem: {e}")
+            # Tentar enviar sem formatação se falhar
+            try:
+                await self.app.bot.send_message(chat_id=self.chat_id, text=text[:4000])
+            except: pass
 
     async def run_scan(self, is_manual=False):
         logger.info("A iniciar scan dinâmico...")
@@ -133,62 +152,61 @@ class StockBot:
             return score
 
         if is_manual:
-            msg = f"🔍 *Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)* — {now}\n"
+            msg = f"🔍 <b>Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)</b> — {now}\n"
             if not current_signals:
                 msg += "Nenhuma ação cumpre os critérios no momento."
             else:
-                # Ordenar por score de ranking (descendente)
                 sorted_signals = sorted(current_signals.values(), key=get_rank_score, reverse=True)
-                
-                # OTIMIZAÇÃO: Suportes já calculados no Scanner.analyze
                 for s in sorted_signals:
                     msg += self._format_signal(s)
         else:
             if new_tickers or new_breakouts:
-                msg = f"🔔 *Atualização Importante* — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
+                msg = f"🔔 <b>Atualização Importante</b> — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
                 if new_tickers:
-                    msg += "🌟 *Novos Ativos na Lista (Ordenados por Força):*\n"
+                    msg += "🌟 <b>Novos Ativos na Lista (Ordenados por Força):</b>\n"
                     sorted_new = sorted([current_signals[t] for t in new_tickers], key=get_rank_score, reverse=True)
                     for s in sorted_new:
                         msg += self._format_signal(s)
 
                 if new_breakouts:
-                    msg += "\n🚀 *Rompimentos 2h Detetados:*\n"
+                    msg += "\n🚀 <b>Rompimentos 2h Detetados:</b>\n"
                     sorted_breakouts = sorted([current_signals[t] for t in new_breakouts], key=get_rank_score, reverse=True)
                     for s in sorted_breakouts:
                         if s['ticker'] in new_tickers:
-                            msg += f"🔹 *{s['ticker']}* também confirmou rompimento!\n"
+                            msg += f"🔹 <b>{s['ticker']}</b> também confirmou rompimento!\n"
                         else:
                             msg += self._format_signal(s)
             else:
                 logger.info("Nenhuma atualização importante encontrada.")
+                if progress_msg: await progress_msg.delete()
                 return
 
         if msg:
             await self.send_direct_msg(msg)
+            if progress_msg: await progress_msg.delete()
 
     def _format_signal(self, s):
         div_status = "✅ Sim" if s['div_bullish'] else "❌ Não"
         vcp_status = "✅ Sim" if s['is_vcp'] else "❌ Não"
-        break_status = "🚀 *ROMPIMENTO 2H!*" if s['breakout_2h'] else ""
+        break_status = "🚀 <b>ROMPIMENTO 2H!</b>" if s['breakout_2h'] else ""
         
         support_msg = ""
         if s.get('key_supports'):
             virgin_supports = [sup for sup in s['key_supports'] if sup.get('virgin')]
             if virgin_supports:
-                support_msg = "🛡️ *Suportes Virgens Próximos:*\n"
+                support_msg = "🛡️ <b>Suportes Virgens Próximos:</b>\n"
                 for sup in virgin_supports:
                     confluences = []
                     if sup.get('conf_ema'): confluences.append("EMA 200 🎯")
                     if sup.get('conf_fib'): confluences.append("FIB 61.8% 📐")
                     conf_text = f" (Confluência: {' + '.join(confluences)})" if confluences else ""
-                    support_msg += f"   └ {sup['type']} Open: `${sup['price']}` (a {sup['dist']}%){conf_text}\n"
+                    support_msg += f"   └ {sup['type']} Open: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
 
-        return (f"🔹 *{s['ticker']}* @ `${s['price']}` {break_status}\n"
-                f"   RS/Setor ({s['sector_etf']}): `{s['rs_sector']}`\n"
+        return (f"🔹 <b>{s['ticker']}</b> @ <code>${s['price']}</code> {break_status}\n"
+                f"   RS/Setor ({s['sector_etf']}): <code>{s['rs_sector']}</code>\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
                 f"{support_msg}"
-                f"   ATR%: `{s['atr_pct']}%` | RSI D: `{s['rsi_daily']}`\n\n")
+                f"   ATR%: <code>{s['atr_pct']}%</code> | RSI D: <code>{s['rsi_daily']}</code>\n\n")
 
     # --- Comandos de Watchlist ---
     async def cmd_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
