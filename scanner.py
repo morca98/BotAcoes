@@ -316,14 +316,10 @@ class Scanner:
                     sector_perf = combined['sector'].iloc[-1] / combined['sector'].iloc[-252]
                     relative_strength = ticker_perf / sector_perf
             
-            # RS Inteligente: Se o ativo for da Watchlist, ignoramos o filtro de RS
-            is_from_watchlist = ticker in self.config.ASSETS # Ou passar a watchlist real
-            
-            if not is_from_watchlist:
-                # Se for do universo geral, mantemos o filtro RS > 1.0
-                # Mas usamos uma margem de tolerância de 0.98 para capturar ativos a recuperar
-                if relative_strength > 0 and relative_strength < 0.98:
-                    return None
+            # Filtro Estrito de Força Relativa: RS > 1.0
+            # Só aceitamos ativos que estejam a superar o seu setor ou o mercado (SPY)
+            if relative_strength <= 1.0:
+                return None
 
             ema20 = float(daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
             # Auditoria: Garantir que EMA 200 existe (mínimo 200 dias de dados)
