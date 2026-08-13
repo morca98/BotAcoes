@@ -132,10 +132,10 @@ class StockBot:
 
                 self.last_scan_time = datetime.now(LISBON_TZ) # Heartbeat
                 now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
-        except Exception as e:
-            logger.error(f"Erro crítico no scan: {e}")
-            await self.send_direct_msg(f"❌ *ERRO CRÍTICO NO SCAN:* {str(e)[:200]}")
-            return
+            except Exception as e:
+                logger.error(f"Erro crítico no scan: {e}")
+                await self.send_direct_msg(f"❌ *ERRO CRÍTICO NO SCAN:* {str(e)[:200]}")
+                return
         current_tickers = set(current_signals.keys())
         new_tickers = current_tickers - self.last_scan_tickers
         new_breakouts = {t for t, s in current_signals.items() if s['breakout_2h'] and t not in self.active_breakouts}
