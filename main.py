@@ -33,8 +33,9 @@ class StockBot:
         self.last_scan_tickers = set()
         self.active_breakouts = set()
         self.active_signals = {} # Tickers que passaram no último scan
-        self.notified_touches = set() # Evitar spam de toques
-        self.notified_breakouts = set() # Evitar spam de rompimentos
+        self.notified_touches = set() # Evitar spam de toques (Diário)
+        self.notified_breakouts = set() # Evitar spam de rompimentos (Diário)
+        self.last_reset_date = datetime.now(LISBON_TZ).date()
         self.user_watchlist = self._load_watchlist()
         
         # Monitorização de Saúde (Watchdog)
@@ -88,15 +89,35 @@ class StockBot:
             return
 
         async with self.scan_lock:
+            # Verificar reset diário de notificações
+            today = datetime.now(LISBON_TZ).date()
+            if today > self.last_reset_date:
+                logger.info("Novo dia detetado. A limpar memória de notificações.")
+                self.notified_touches = set()
+                self.notified_breakouts = set()
+                self.last_reset_date = today
+
             logger.info("A iniciar scan dinâmico...")
             
+            self.market_regime = "🟢 <b>MERCADO SAUDÁVEL (Risk-On)</b>"
             try:
-                # 1. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
+                # 1. Verificar Regime de Mercado (SPY)
+                import yfinance as yf
+                spy = yf.Ticker("SPY")
+                spy_data = spy.history(period="5d", interval="60m")
+                if not spy_data.empty:
+                    spy_price = spy_data['Close'].iloc[-1]
+                    spy_ema20 = spy_data['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+                    if spy_price < spy_ema20:
+                        self.market_regime = "⚠️ <b>MERCADO EM QUEDA (Risk-Off)</b>"
+                        logger.warning("Mercado em queda (SPY < EMA20).")
+                
+                # 2. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
                 loop = asyncio.get_running_loop()
                 full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
                 full_universe = list(set(full_universe) | self.user_watchlist)
                 
-                # 2. Filtrar por Top Liquidez (500 ativos)
+                # 3. Filtrar por Top Liquidez (500 ativos)
                 filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 500)
                 
                 # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
@@ -144,8 +165,7 @@ class StockBot:
         self.last_scan_tickers = current_tickers
         self.active_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']}
         self.active_signals = current_signals # Guardar para monitorização de toques
-        self.notified_touches = set() # Resetar memória de toques no novo scan
-        self.notified_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']} # Sincronizar rompimentos notificados
+        # REMOVIDO: self.notified_touches = set() -> Agora o reset é diário no topo do run_scan
 
         msg = ""
         
@@ -162,7 +182,7 @@ class StockBot:
             return (stars * 1000) + (rs * 10)
 
         if is_manual:
-            header = f"🔍 <b>Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)</b> — {now}\n"
+            header = f"🔍 <b>Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)</b>\n{self.market_regime}\n🕒 {now}\n"
             await self.send_direct_msg(header)
             
             if not current_signals:
@@ -228,10 +248,13 @@ class StockBot:
                     support_msg += f"   └ {html.escape(sup['type'])}: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
                 support_msg += "</tg-spoiler>"
 
+        stop_msg = f"\n   🛡️ <b>Stop Sugerido (ATR):</b> <code>${s.get('stop_loss', 0)}</code> ({s.get('risk_pct', 0)}%)"
+        
         return (f"🔹 <b>{ticker}</b> {stars} @ <code>${s['price']}</code> {break_status}{stretch_msg}\n"
                 f"   RS/Setor ({sector_etf}): <code>{s['rs_sector']}</code>\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
                 f"{support_msg}"
+                f"{stop_msg}\n"
                 f"   ATR%: <code>{s['atr_pct']}%</code> | RSI D: <code>{s['rsi_daily']}</code>")
 
     # --- Comandos de Watchlist ---
