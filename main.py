@@ -248,13 +248,10 @@ class StockBot:
                     support_msg += f"   └ {html.escape(sup['type'])}: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
                 support_msg += "</tg-spoiler>"
 
-        stop_msg = f"\n   🛡️ <b>Stop Sugerido (ATR):</b> <code>${s.get('stop_loss', 0)}</code> ({s.get('risk_pct', 0)}%)"
-        
         return (f"🔹 <b>{ticker}</b> {stars} @ <code>${s['price']}</code> {break_status}{stretch_msg}\n"
                 f"   RS/Setor ({sector_etf}): <code>{s['rs_sector']}</code>\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
                 f"{support_msg}"
-                f"{stop_msg}\n"
                 f"   ATR%: <code>{s['atr_pct']}%</code> | RSI D: <code>{s['rsi_daily']}</code>")
 
     # --- Comandos de Watchlist ---

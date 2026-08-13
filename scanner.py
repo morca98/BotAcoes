@@ -413,10 +413,6 @@ class Scanner:
             # 6. Filtro de Exaustão
             is_stretched = dist_ema20 > 6.0 # Mais de 6% longe da EMA 20
             
-            # 7. Sugestão de Stop Loss (1.5x ATR)
-            stop_price = current_price - (1.5 * atr)
-            risk_pct = ((current_price - stop_price) / current_price) * 100
-
             # Validação final para evitar NaN no relatório
             metrics = [current_price, rsi_daily, rsi_h1, atr_pct, relative_strength, dist_ema20]
             if any(np.isnan(m) or np.isinf(m) for m in metrics):
@@ -443,8 +439,6 @@ class Scanner:
                 "key_supports": supports,
                 "stars": stars,
                 "is_stretched": is_stretched,
-                "stop_loss": round(stop_price, 2),
-                "risk_pct": round(risk_pct, 2),
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
         except Exception as e:
