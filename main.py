@@ -91,47 +91,47 @@ class StockBot:
             
             try:
                 # 1. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
-            loop = asyncio.get_running_loop()
-            full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
-            full_universe = list(set(full_universe) | self.user_watchlist)
-            
-            # 2. Filtrar por Top Liquidez (500 ativos)
-            filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 500)
-            
-            # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
-            current_signals = {}
-            total_to_analyze = len(filtered_universe)
-            logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")
-            
-            semaphore = asyncio.Semaphore(15) # Máximo de 15 análises simultâneas
-            progress_msg = None
-            if is_manual:
-                progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text="⏳ Progresso: 0%")
+                loop = asyncio.get_running_loop()
+                full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
+                full_universe = list(set(full_universe) | self.user_watchlist)
+                
+                # 2. Filtrar por Top Liquidez (500 ativos)
+                filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 500)
+                
+                # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
+                current_signals = {}
+                total_to_analyze = len(filtered_universe)
+                logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")
+                
+                semaphore = asyncio.Semaphore(15) # Máximo de 15 análises simultâneas
+                progress_msg = None
+                if is_manual:
+                    progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text="⏳ Progresso: 0%")
 
-            async def semi_analyze(ticker, index):
-                async with semaphore:
-                    try:
-                        res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
-                        if index % 50 == 0 and progress_msg:
-                            pct = int((index / total_to_analyze) * 100)
-                            await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({index}/{total_to_analyze})")
-                        return ticker, res
-                    except Exception as e:
-                        logger.error(f"Erro em {ticker}: {e}")
-                        return ticker, None
+                async def semi_analyze(ticker, index):
+                    async with semaphore:
+                        try:
+                            res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
+                            if index % 50 == 0 and progress_msg:
+                                pct = int((index / total_to_analyze) * 100)
+                                await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({index}/{total_to_analyze})")
+                            return ticker, res
+                        except Exception as e:
+                            logger.error(f"Erro em {ticker}: {e}")
+                            return ticker, None
 
-            tasks = [semi_analyze(t, i) for i, t in enumerate(filtered_universe)]
-            results = await asyncio.gather(*tasks)
-            
-            for ticker, res in results:
-                if res:
-                    current_signals[ticker] = res
-            
-            if progress_msg:
-                await progress_msg.delete()
+                tasks = [semi_analyze(t, i) for i, t in enumerate(filtered_universe)]
+                results = await asyncio.gather(*tasks)
+                
+                for ticker, res in results:
+                    if res:
+                        current_signals[ticker] = res
+                
+                if progress_msg:
+                    await progress_msg.delete()
 
-            self.last_scan_time = datetime.now(LISBON_TZ) # Heartbeat
-            now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
+                self.last_scan_time = datetime.now(LISBON_TZ) # Heartbeat
+                now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
         except Exception as e:
             logger.error(f"Erro crítico no scan: {e}")
             await self.send_direct_msg(f"❌ *ERRO CRÍTICO NO SCAN:* {str(e)[:200]}")
