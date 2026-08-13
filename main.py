@@ -35,6 +35,10 @@ class StockBot:
         self.notified_touches = set() # Evitar spam de toques
         self.user_watchlist = self._load_watchlist()
         
+        # Monitorização de Saúde (Watchdog)
+        self.last_scan_time = datetime.now(LISBON_TZ)
+        self.last_support_check_time = datetime.now(LISBON_TZ)
+        
         self.app = ApplicationBuilder().token(self.token).build()
 
     def _load_watchlist(self):
@@ -59,47 +63,53 @@ class StockBot:
     async def run_scan(self, is_manual=False):
         logger.info("A iniciar scan dinâmico...")
         
-        # 1. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
-        loop = asyncio.get_running_loop()
-        full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
-        full_universe = list(set(full_universe) | self.user_watchlist)
-        
-        # 2. Filtrar por Top Liquidez (500 ativos)
-        filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 500)
-        
-        # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
-        current_signals = {}
-        total_to_analyze = len(filtered_universe)
-        logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")
-        
-        semaphore = asyncio.Semaphore(15) # Máximo de 15 análises simultâneas
-        progress_msg = None
-        if is_manual:
-            progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text="⏳ Progresso: 0%")
+        try:
+            # 1. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
+            loop = asyncio.get_running_loop()
+            full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
+            full_universe = list(set(full_universe) | self.user_watchlist)
+            
+            # 2. Filtrar por Top Liquidez (500 ativos)
+            filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 500)
+            
+            # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
+            current_signals = {}
+            total_to_analyze = len(filtered_universe)
+            logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")
+            
+            semaphore = asyncio.Semaphore(15) # Máximo de 15 análises simultâneas
+            progress_msg = None
+            if is_manual:
+                progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text="⏳ Progresso: 0%")
 
-        async def semi_analyze(ticker, index):
-            async with semaphore:
-                try:
-                    res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
-                    if index % 50 == 0 and progress_msg:
-                        pct = int((index / total_to_analyze) * 100)
-                        await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({index}/{total_to_analyze})")
-                    return ticker, res
-                except Exception as e:
-                    logger.error(f"Erro em {ticker}: {e}")
-                    return ticker, None
+            async def semi_analyze(ticker, index):
+                async with semaphore:
+                    try:
+                        res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
+                        if index % 50 == 0 and progress_msg:
+                            pct = int((index / total_to_analyze) * 100)
+                            await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({index}/{total_to_analyze})")
+                        return ticker, res
+                    except Exception as e:
+                        logger.error(f"Erro em {ticker}: {e}")
+                        return ticker, None
 
-        tasks = [semi_analyze(t, i) for i, t in enumerate(filtered_universe)]
-        results = await asyncio.gather(*tasks)
-        
-        for ticker, res in results:
-            if res:
-                current_signals[ticker] = res
-        
-        if progress_msg:
-            await progress_msg.delete()
+            tasks = [semi_analyze(t, i) for i, t in enumerate(filtered_universe)]
+            results = await asyncio.gather(*tasks)
+            
+            for ticker, res in results:
+                if res:
+                    current_signals[ticker] = res
+            
+            if progress_msg:
+                await progress_msg.delete()
 
-        now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
+            self.last_scan_time = datetime.now(LISBON_TZ) # Heartbeat
+            now = datetime.now(LISBON_TZ).strftime("%d/%m/%Y %H:%M")
+        except Exception as e:
+            logger.error(f"Erro crítico no scan: {e}")
+            await self.send_direct_msg(f"❌ *ERRO CRÍTICO NO SCAN:* {str(e)[:200]}")
+            return
         current_tickers = set(current_signals.keys())
         new_tickers = current_tickers - self.last_scan_tickers
         new_breakouts = {t for t, s in current_signals.items() if s['breakout_2h'] and t not in self.active_breakouts}
@@ -267,6 +277,7 @@ class StockBot:
                                 await self.send_direct_msg(alert.replace("\n   \n", "\n"))
                                 self.notified_touches.add(touch_key)
                 
+                self.last_support_check_time = datetime.now(LISBON_TZ) # Heartbeat
             except Exception as e:
                 logger.error(f"Erro no monitor de suportes: {e}")
             
@@ -278,6 +289,25 @@ class StockBot:
             await self.run_scan(is_manual=False)
             await asyncio.sleep(7200)
 
+    async def watchdog_loop(self):
+        """Monitor de saúde: Alerta se os loops pararem."""
+        logger.info("Watchdog de saúde iniciado.")
+        while True:
+            await asyncio.sleep(900) # Verificar a cada 15 minutos
+            now = datetime.now(LISBON_TZ)
+            
+            # 1. Verificar Scan (2h normal, alertar se > 3h)
+            scan_diff = (now - self.last_scan_time).total_seconds() / 3600
+            if scan_diff > 3.0:
+                await self.send_direct_msg(f"⚠️ *AVISO DE SAÚDE:* O scan automático não é concluído há {round(scan_diff, 1)} horas! Possível bloqueio.")
+                self.last_scan_time = now # Reset para evitar spam
+            
+            # 2. Verificar Monitor de Suportes (5 min normal, alertar se > 20 min)
+            sup_diff = (now - self.last_support_check_time).total_seconds() / 60
+            if sup_diff > 20.0:
+                await self.send_direct_msg(f"⚠️ *AVISO DE SAÚDE:* O monitor de suportes está inativo há {round(sup_diff, 0)} minutos!")
+                self.last_support_check_time = now
+
     async def post_init(self, application):
         await self.send_direct_msg("🟢 *Bot Pro Iniciado!* (Universo Dinâmico Ativo)\n_A preparar o primeiro scan..._")
         # Agendar o primeiro scan com um pequeno delay para garantir que o bot está pronto
@@ -286,6 +316,7 @@ class StockBot:
         # Iniciar loops de agendamento
         asyncio.create_task(self.scheduler_loop())
         asyncio.create_task(self.support_monitor_loop())
+        asyncio.create_task(self.watchdog_loop())
 
     def run(self):
         self.app.add_handler(CommandHandler("start", self.cmd_start))
