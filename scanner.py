@@ -61,8 +61,8 @@ class Scanner:
             response = requests.get(url_nasdaq, headers=headers, timeout=10)
             tables = pd.read_html(io.StringIO(response.text))
             for df in tables:
-                symbol_col = next((c for c in df.columns if c in ['Ticker', 'Symbol']), None)
-                sector_col = next((c for c in df.columns if 'Sector' in c or 'Industry' in c), None)
+                symbol_col = next((c for c in df.columns if str(c) in ['Ticker', 'Symbol']), None)
+                sector_col = next((c for c in df.columns if isinstance(c, str) and ('Sector' in c or 'Industry' in c)), None)
                 if symbol_col:
                     for _, row in df.iterrows():
                         symbol = str(row[symbol_col]).replace('.', '-')
@@ -308,9 +308,14 @@ class Scanner:
                     sector_perf = combined['sector'].iloc[-1] / combined['sector'].iloc[-252]
                     relative_strength = ticker_perf / sector_perf
             
-            # Se ainda for 0 (erro de dados), não filtramos por RS para não perder o ativo
-            if relative_strength > 0 and relative_strength <= 1.0:
-                return None
+            # RS Inteligente: Se o ativo for da Watchlist, ignoramos o filtro de RS
+            is_from_watchlist = ticker in self.config.ASSETS # Ou passar a watchlist real
+            
+            if not is_from_watchlist:
+                # Se for do universo geral, mantemos o filtro RS > 1.0
+                # Mas usamos uma margem de tolerância de 0.98 para capturar ativos a recuperar
+                if relative_strength > 0 and relative_strength < 0.98:
+                    return None
 
             ema20 = float(daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
             ema70 = float(daily["Close"].ewm(span=70, adjust=False).mean().iloc[-1])
@@ -352,9 +357,9 @@ class Scanner:
             if rsi_daily > self.config.MAX_RSI_DAILY: return None
             if rsi_h1 > self.config.MAX_RSI_4H: return None
             if dist_ema20 > self.config.MAX_EMA20_DIST_PCT: return None
+            # O preço deve estar acima da EMA 200 para garantir tendência de longo prazo
             if current_price < ema200: return None
-            # Mantemos apenas o alinhamento de longo prazo (70 > 200) para permitir pullbacks da 20
-            if ema70 < ema200: return None
+            
             if atr_pct < self.config.MIN_ATR_PCT: return None
 
             return {
