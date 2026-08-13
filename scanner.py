@@ -11,6 +11,14 @@ logger = logging.getLogger(__name__)
 
 class Scanner:
     SECTOR_ETFS = {
+        # Mapeamento Wikipedia (GICS)
+        "Information Technology": "XLK",
+        "Financials": "XLK",
+        "Health Care": "XLV",
+        "Consumer Discretionary": "XLY",
+        "Consumer Staples": "XLP",
+        "Materials": "XLB",
+        # Mapeamento alternativo/yfinance
         "Technology": "XLK",
         "Financial Services": "XLF",
         "Healthcare": "XLV",
@@ -119,8 +127,7 @@ class Scanner:
         logger.info(f"Filtro concluído. {len(top_tickers)} ativos selecionados.")
         return top_tickers
 
-    def _get_sector_etf_data(self, sector_name: str):
-        etf_ticker = self.SECTOR_ETFS.get(sector_name)
+    def _get_sector_etf_data(self, etf_ticker: str):
         if not etf_ticker:
             return None
         if etf_ticker not in self._sector_data_cache:
@@ -286,18 +293,23 @@ class Scanner:
                 pass
 
             relative_strength = 0
-            etf_ticker = "N/A"
-            if sector:
-                sector_daily = self._get_sector_etf_data(sector)
-                etf_ticker = self.SECTOR_ETFS.get(sector, "N/A")
-                if sector_daily is not None and len(sector_daily) >= 252:
-                    combined = pd.DataFrame({'ticker': daily['Close'], 'sector': sector_daily['Close']}).dropna()
-                    if len(combined) >= 252:
-                        ticker_perf = combined['ticker'].iloc[-1] / combined['ticker'].iloc[-252]
-                        sector_perf = combined['sector'].iloc[-1] / combined['sector'].iloc[-252]
-                        relative_strength = ticker_perf / sector_perf
+            etf_ticker = self.SECTOR_ETFS.get(sector, "SPY") if sector else "SPY"
             
-            if relative_strength <= 1.0:
+            # Tentar obter dados do setor ou fallback para SPY
+            sector_daily = self._get_sector_etf_data(etf_ticker)
+            if sector_daily is None:
+                sector_daily = self._get_sector_etf_data("SPY")
+                etf_ticker = "SPY"
+
+            if sector_daily is not None and len(sector_daily) >= 252:
+                combined = pd.DataFrame({'ticker': daily['Close'], 'sector': sector_daily['Close']}).dropna()
+                if len(combined) >= 252:
+                    ticker_perf = combined['ticker'].iloc[-1] / combined['ticker'].iloc[-252]
+                    sector_perf = combined['sector'].iloc[-1] / combined['sector'].iloc[-252]
+                    relative_strength = ticker_perf / sector_perf
+            
+            # Se ainda for 0 (erro de dados), não filtramos por RS para não perder o ativo
+            if relative_strength > 0 and relative_strength <= 1.0:
                 return None
 
             ema20 = float(daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
@@ -341,7 +353,8 @@ class Scanner:
             if rsi_h1 > self.config.MAX_RSI_4H: return None
             if dist_ema20 > self.config.MAX_EMA20_DIST_PCT: return None
             if current_price < ema200: return None
-            if ema20 < ema70 or ema70 < ema200: return None
+            # Mantemos apenas o alinhamento de longo prazo (70 > 200) para permitir pullbacks da 20
+            if ema70 < ema200: return None
             if atr_pct < self.config.MIN_ATR_PCT: return None
 
             return {
