@@ -203,90 +203,125 @@ class Scanner:
         return float(vwap.iloc[-1])
 
     def get_key_supports(self, ticker, current_price, daily_data):
-        """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás) com otimização profissional."""
-        supports = []
+        """Calcula zonas de suporte com clustering, EMA 70/200 e Golden Pocket Fibonacci."""
+        all_levels = []
         try:
-            if daily_data is None or len(daily_data) < 20: return supports
+            if daily_data is None or len(daily_data) < 20: return []
             
-            # Calcular confluências: EMA 200 e Fibonacci 61.8%
+            # 1. Níveis Técnicos (EMA e Fibonacci)
             ema200 = float(daily_data["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
+            ema70 = float(daily_data["Close"].ewm(span=70, adjust=False).mean().iloc[-1])
             
-            # Fibonacci 61.8% (baseado no High/Low do último ano)
             last_year = daily_data.iloc[-252:] if len(daily_data) >= 252 else daily_data
             high_52w = float(last_year['High'].max())
             low_52w = float(last_year['Low'].min())
             
-            # Filtro de Volatilidade Anual (Amplitude > 50%)
-            annual_range_pct = ((high_52w - low_52w) / low_52w) * 100
-            if annual_range_pct < 50.0:
-                return None # Excluir ativos com baixa volatilidade anual
-                
+            # Golden Pocket (61.8% - 66.6%)
             fib_618 = high_52w - (high_52w - low_52w) * 0.618
+            fib_666 = high_52w - (high_52w - low_52w) * 0.666
             
-            # OTIMIZAÇÃO: Calcular o Low acumulado reverso para verificar virgindade instantaneamente
-            rev_low_min = daily_data['Low'][::-1].cummin()[::-1]
+            # AVWAP
+            avwap_low = self._calculate_avwap(daily_data, "low")
+            avwap_high = self._calculate_avwap(daily_data, "high")
 
-            # 1. Abertura Diária (Últimos 252 dias úteis - 1 ano)
+            # Adicionar níveis técnicos à lista de candidatos
+            tech_candidates = [
+                ("EMA 200", ema200), ("EMA 70", ema70), 
+                ("Fib 61.8%", fib_618), ("Fib 66.6%", fib_666)
+            ]
+            if avwap_low: tech_candidates.append(("AVWAP Fundo", avwap_low))
+            if avwap_high: tech_candidates.append(("AVWAP Topo", avwap_high))
+            
+            for label, price in tech_candidates:
+                if price < current_price:
+                    dist = ((current_price - price) / price) * 100
+                    if dist <= 12.0:
+                        all_levels.append({"type": label, "price": price, "is_tech": True})
+
+            # 2. Aberturas Virgens (Diárias e Semanais)
+            rev_low_min = daily_data['Low'][::-1].cummin()[::-1]
             daily_opens = daily_data.iloc[-252:]
             for i in range(1, len(daily_opens) + 1):
                 row = daily_opens.iloc[-i]
                 d_open, d_time = float(row['Open']), row.name
-                
-                # Filtro rápido de distância (apenas suportes abaixo do preço atual e dentro de 12%)
-                if d_open >= current_price: continue
-                dist = ((current_price - d_open) / d_open) * 100
-                if dist > 12.0: continue
+                if d_open < current_price:
+                    dist = ((current_price - d_open) / d_open) * 100
+                    if dist <= 12.0:
+                        is_virgin = True
+                        if i > 1:
+                            min_after = rev_low_min.iloc[-i+1:].min()
+                            if min_after < (d_open * 0.999): is_virgin = False
+                        if is_virgin:
+                            label = "Diária (Hoje)" if i == 1 else f"Diária ({d_time.strftime('%d/%m')})"
+                            all_levels.append({"type": label, "price": d_open, "is_tech": False})
 
-                # Virgindade: O menor Low desde a abertura até hoje foi maior que a abertura?
-                is_virgin = True
-                if i > 1:
-                    min_after = rev_low_min.iloc[-i+1:].min()
-                    if min_after < (d_open * 0.999):
-                        is_virgin = False
-                
-                if is_virgin:
-                    conf_ema = abs(d_open - ema200) / ema200 <= 0.01
-                    conf_fib = abs(d_open - fib_618) / fib_618 <= 0.01
-                    label = "Diária (Hoje)" if i == 1 else f"Diária ({d_time.strftime('%d/%m')})"
-                    supports.append({
-                        "type": label, "price": round(d_open, 2), "dist": round(dist, 2), 
-                        "virgin": True, "conf_ema": conf_ema, "conf_fib": conf_fib
-                    })
-
-            # 2. Aberturas Semanais (52 semanas atrás)
-            # Agrupar por semana para obter aberturas reais
             weekly_data = daily_data.resample('W-MON').agg({'Open': 'first', 'Low': 'min'}).dropna()
             weekly_opens = weekly_data.iloc[-53:]
-            
             for i in range(len(weekly_opens)):
                 w_row = weekly_opens.iloc[i]
                 w_open, w_time = float(w_row['Open']), w_row.name
-                
-                if w_open >= current_price: continue
-                dist = ((current_price - w_open) / w_open) * 100
-                if dist > 12.0: continue
+                if w_open < current_price:
+                    dist = ((current_price - w_open) / w_open) * 100
+                    if dist <= 12.0:
+                        after_w = daily_data[daily_data.index > w_time]
+                        is_virgin = True
+                        if not after_w.empty and float(after_w['Low'].min()) < (w_open * 0.999): is_virgin = False
+                        if is_virgin:
+                            all_levels.append({"type": f"Semanal ({w_time.strftime('%d/%m')})", "price": w_open, "is_tech": False})
 
-                # Virgindade semanal: Menor Low diário desde aquela semana
-                after_w = daily_data[daily_data.index > w_time]
-                is_virgin = True
-                if not after_w.empty:
-                    if float(after_w['Low'].min()) < (w_open * 0.999):
-                        is_virgin = False
-                
-                if is_virgin:
-                    conf_ema = abs(w_open - ema200) / ema200 <= 0.01
-                    conf_fib = abs(w_open - fib_618) / fib_618 <= 0.01
-                    label = f"Semanal ({w_time.strftime('%d/%m')})"
-                    supports.append({
-                        "type": label, "price": round(w_open, 2), "dist": round(dist, 2), 
-                        "virgin": True, "conf_ema": conf_ema, "conf_fib": conf_fib
-                    })
+            # 3. Lógica de Clustering (Agrupar níveis a menos de 0.3%)
+            if not all_levels: return []
             
-            unique_supports = {}
-            for s in supports:
-                if s['price'] not in unique_supports:
-                    unique_supports[s['price']] = s
-            return sorted(unique_supports.values(), key=lambda x: x['dist'])[:5]
+            all_levels.sort(key=lambda x: x['price'], reverse=True) # Do mais alto para o mais baixo
+            clusters = []
+            if all_levels:
+                current_cluster = [all_levels[0]]
+                for i in range(1, len(all_levels)):
+                    prev_price = current_cluster[-1]['price']
+                    curr_price = all_levels[i]['price']
+                    # Se a diferença for < 0.3% do preço mais alto do cluster
+                    if (prev_price - curr_price) / prev_price <= 0.003:
+                        current_cluster.append(all_levels[i])
+                    else:
+                        clusters.append(current_cluster)
+                        current_cluster = [all_levels[i]]
+                clusters.append(current_cluster)
+
+            # 4. Formatar Clusters em Zonas
+            final_zones = []
+            for cluster in clusters:
+                prices = [c['price'] for c in cluster]
+                min_p, max_p = min(prices), max(prices)
+                avg_p = sum(prices) / len(prices)
+                dist = ((current_price - avg_p) / avg_p) * 100
+                
+                # Identificar componentes e confluências
+                types = [c['type'] for c in cluster]
+                has_ema200 = any("EMA 200" in t for t in types)
+                has_ema70 = any("EMA 70" in t for t in types)
+                has_fib = any("Fib" in t for t in types)
+                has_avwap = any("AVWAP" in t for t in types)
+                
+                # Nome da Zona
+                if len(cluster) > 1:
+                    zone_label = f"Zona ({len(cluster)} níveis)"
+                else:
+                    zone_label = cluster[0]['type']
+
+                final_zones.append({
+                    "type": zone_label,
+                    "price": f"{min_p:.2f} - {max_p:.2f}" if min_p != max_p else f"{min_p:.2f}",
+                    "avg_price": avg_p,
+                    "dist": round(dist, 2),
+                    "conf_ema200": has_ema200,
+                    "conf_ema70": has_ema70,
+                    "conf_fib": has_fib,
+                    "conf_avwap": has_avwap,
+                    "is_zone": len(cluster) > 1,
+                    "virgin": any(not c['is_tech'] for c in cluster)
+                })
+
+            return sorted(final_zones, key=lambda x: x['dist'])[:5]
         except Exception as e:
             logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
         return supports

@@ -236,16 +236,19 @@ class StockBot:
         
         support_msg = ""
         if s.get('key_supports'):
-            virgin_supports = [sup for sup in s['key_supports'] if sup.get('virgin')]
-            if virgin_supports:
+            relevant_supports = s['key_supports']
+            if relevant_supports:
                 support_msg = "🛡️ <b>Zonas de Interesse (Clica para ver):</b>\n<tg-spoiler>"
-                for sup in virgin_supports:
+                for sup in relevant_supports:
                     confluences = []
-                    if sup.get('conf_ema'): confluences.append("EMA 200 🎯")
-                    if sup.get('conf_fib'): confluences.append("FIB 61.8% 📐")
-                    if "AVWAP" in sup['type']: confluences.append("Institucional 🏛️")
+                    if sup.get('conf_ema200'): confluences.append("EMA 200 🎯")
+                    if sup.get('conf_ema70'): confluences.append("EMA 70 🛡️")
+                    if sup.get('conf_fib'): confluences.append("Golden Pocket 📐")
+                    if sup.get('conf_avwap'): confluences.append("Institucional 🏛️")
+                    
                     conf_text = f" ({' + '.join(confluences)})" if confluences else ""
-                    support_msg += f"   └ {html.escape(sup['type'])}: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
+                    icon = "🔥 " if sup.get('is_zone') else "└ "
+                    support_msg += f"   {icon}{html.escape(sup['type'])}: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
                 support_msg += "</tg-spoiler>"
 
         return (f"🔹 <b>{ticker}</b> {stars} @ <code>${s['price']}</code> {break_status}{stretch_msg}\n"
@@ -330,15 +333,19 @@ class StockBot:
                                 vol_msg = "✅ <b>Defesa Institucional (Volume Spike!)</b>" if vol_spike else "⚠️ Sem pico de volume"
                                 
                                 conf_list = []
-                                if sup.get('conf_ema'): conf_list.append("EMA 200 🎯")
-                                if sup.get('conf_fib'): conf_list.append("FIB 61.8% 📐")
+                                if sup.get('conf_ema200'): conf_list.append("EMA 200 🎯")
+                                if sup.get('conf_ema70'): conf_list.append("EMA 70 🛡️")
+                                if sup.get('conf_fib'): conf_list.append("Golden Pocket 📐")
+                                if sup.get('conf_avwap'): conf_list.append("Institucional 🏛️")
                                 conf_msg = f"🌟 <b>Confluência Detetada: {' + '.join(conf_list)}</b>" if conf_list else ""
                                 
                                 current_price_fmt = round(current_price, 2)
                                 ticker_esc = html.escape(ticker)
                                 type_esc = html.escape(sup['type'])
-                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Virgem Tocado! (&lt; 0.2%)</b>\n"
-                                         f"🔥 <b>{ticker_esc}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{type_esc} Open (${sup['price']})</b>\n"
+                                price_val = sup['price']
+                                
+                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Tocado! (&lt; 0.2%)</b>\n"
+                                         f"🔥 <b>{ticker_esc}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{type_esc} (${price_val})</b>\n"
                                          f"{vol_msg}\n"
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
