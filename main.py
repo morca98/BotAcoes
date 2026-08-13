@@ -3,6 +3,7 @@ import os
 import sys
 import asyncio
 import json
+import html
 from datetime import datetime
 import pytz
 from telegram import Update
@@ -190,6 +191,9 @@ class StockBot:
         vcp_status = "✅ Sim" if s['is_vcp'] else "❌ Não"
         break_status = "🚀 <b>ROMPIMENTO 2H!</b>" if s['breakout_2h'] else ""
         
+        ticker = html.escape(str(s['ticker']))
+        sector_etf = html.escape(str(s['sector_etf']))
+        
         support_msg = ""
         if s.get('key_supports'):
             virgin_supports = [sup for sup in s['key_supports'] if sup.get('virgin')]
@@ -200,10 +204,10 @@ class StockBot:
                     if sup.get('conf_ema'): confluences.append("EMA 200 🎯")
                     if sup.get('conf_fib'): confluences.append("FIB 61.8% 📐")
                     conf_text = f" (Confluência: {' + '.join(confluences)})" if confluences else ""
-                    support_msg += f"   └ {sup['type']} Open: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
+                    support_msg += f"   └ {html.escape(sup['type'])} Open: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
 
-        return (f"🔹 <b>{s['ticker']}</b> @ <code>${s['price']}</code> {break_status}\n"
-                f"   RS/Setor ({s['sector_etf']}): <code>{s['rs_sector']}</code>\n"
+        return (f"🔹 <b>{ticker}</b> @ <code>${s['price']}</code> {break_status}\n"
+                f"   RS/Setor ({sector_etf}): <code>{s['rs_sector']}</code>\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
                 f"{support_msg}"
                 f"   ATR%: <code>{s['atr_pct']}%</code> | RSI D: <code>{s['rsi_daily']}</code>\n\n")
