@@ -310,9 +310,8 @@ class StockBot:
 
     async def post_init(self, application):
         await self.send_direct_msg("🟢 *Bot Pro Iniciado!* (Universo Dinâmico Ativo)\n_A preparar o primeiro scan..._")
-        # Agendar o primeiro scan com um pequeno delay para garantir que o bot está pronto
-        loop = asyncio.get_event_loop()
-        loop.call_later(5, lambda: asyncio.create_task(self.run_scan(is_manual=False)))
+        # Iniciar o primeiro scan com is_manual=True para mostrar o progresso ao utilizador
+        asyncio.create_task(self.run_scan(is_manual=True))
         # Iniciar loops de agendamento
         asyncio.create_task(self.scheduler_loop())
         asyncio.create_task(self.support_monitor_loop())

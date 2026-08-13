@@ -29,46 +29,44 @@ class Scanner:
     def __init__(self, config):
         self.config = config
         self._sector_data_cache = {}
+        self._ticker_sectors = {} # Cache de setores: Ticker -> Sector Name
         self._universe_cache = None
 
     def get_dynamic_universe(self):
-        """Obtém componentes do S&P 500, Nasdaq 100 e ETFs temáticos com User-Agent para evitar 403."""
+        """Obtém componentes do S&P 500, Nasdaq 100 e mapeia setores para evitar chamadas lentas."""
         tickers = set(self.THEMATIC_ETFS)
-        tickers.update(self.config.ASSETS) # Garantir que a lista base está sempre presente
+        tickers.update(self.config.ASSETS)
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         
         try:
-            # S&P 500
+            # 1. S&P 500 + Setores
             url_sp500 = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
             response = requests.get(url_sp500, headers=headers, timeout=10)
             sp500 = pd.read_html(io.StringIO(response.text))[0]
-            tickers.update(sp500['Symbol'].tolist())
-            logger.info(f"S&P 500 obtido: {len(sp500)} ativos")
+            for _, row in sp500.iterrows():
+                symbol = str(row['Symbol']).replace('.', '-')
+                tickers.add(symbol)
+                self._ticker_sectors[symbol] = row['GICS Sector']
             
-            # Nasdaq 100
+            # 2. Nasdaq 100 + Setores
             url_nasdaq = 'https://en.wikipedia.org/wiki/Nasdaq-100'
             response = requests.get(url_nasdaq, headers=headers, timeout=10)
             tables = pd.read_html(io.StringIO(response.text))
-            nasdaq_count = 0
             for df in tables:
-                if 'Ticker' in df.columns:
-                    t_list = df['Ticker'].tolist()
-                    tickers.update(t_list)
-                    nasdaq_count = len(t_list)
+                symbol_col = next((c for c in df.columns if c in ['Ticker', 'Symbol']), None)
+                sector_col = next((c for c in df.columns if 'Sector' in c or 'Industry' in c), None)
+                if symbol_col:
+                    for _, row in df.iterrows():
+                        symbol = str(row[symbol_col]).replace('.', '-')
+                        tickers.add(symbol)
+                        if sector_col:
+                            self._ticker_sectors[symbol] = row[sector_col]
                     break
-                elif 'Symbol' in df.columns:
-                    t_list = df['Symbol'].tolist()
-                    tickers.update(t_list)
-                    nasdaq_count = len(t_list)
-                    break
-            logger.info(f"Nasdaq 100 obtido: {nasdaq_count} ativos")
         except Exception as e:
             logger.error(f"Erro ao obter índices da Wikipedia: {e}")
-            tickers.update(self.config.ASSETS)
 
-        clean_tickers = [str(t).replace('.', '-') for t in tickers if isinstance(t, (str, float)) and str(t) != 'nan']
-        final_list = list(set(clean_tickers))
-        logger.info(f"Universo dinâmico final: {len(final_list)} ativos")
+        final_list = list(set([t for t in tickers if isinstance(t, str) and t != 'nan']))
+        logger.info(f"Universo dinâmico: {len(final_list)} ativos. Setores mapeados: {len(self._ticker_sectors)}")
         return final_list
 
     def filter_by_liquidity(self, tickers, limit=500):
@@ -258,35 +256,34 @@ class Scanner:
 
     def analyze(self, ticker: str):
         try:
-            # OTIMIZAÇÃO: Usar Ticker.fast_info para dados básicos e evitar tk.info
+            # OTIMIZAÇÃO EXTREMA: Usar mapeamento de setores da Wikipedia e fast_info
             tk = yf.Ticker(ticker)
+            
+            # 1. Tentar obter preço e market cap rápido
             try:
                 f_info = tk.fast_info
                 market_cap = f_info.get("market_cap", 0)
                 if market_cap and market_cap < self.config.MIN_MARKET_CAP: return None
                 current_price = f_info.get("last_price")
             except:
+                market_cap = 0
                 current_price = None
 
+            # 2. Obter histórico (essencial para indicadores)
             daily = tk.history(period="2y", interval="1d")
-            if daily is None or len(daily) < 100: return None
+            if daily is None or len(daily) < 50: return None
             
-            # Se fast_info falhou, usar o último fecho do histórico
             if current_price is None:
                 current_price = float(daily["Close"].dropna().iloc[-1])
             
             if current_price < self.config.MIN_PRICE: return None
 
-            # Obter setor apenas se necessário para RS (tentar cache primeiro)
-            sector = None
-            # Nota: yfinance não tem setor no fast_info. Como trader, prefiro 
-            # saltar o filtro de setor se o yfinance estiver lento, mas manter o bot fluido.
-            # Por agora, tentamos tk.info com um timeout implícito curto (não nativo, mas via thread)
-            # Para simplificar, assumimos que se falhar, o RS será 0 e o ativo filtrado.
-            try:
-                info = tk.info
-                sector = info.get("sector")
-            except: pass
+            # 3. Obter Setor (Prioridade: Wikipedia Cache -> yfinance fast_info se disponível -> Skip)
+            sector = self._ticker_sectors.get(ticker)
+            if not sector:
+                # Se não estiver no cache, tentamos o info mas apenas se for estritamente necessário
+                # Para evitar lentidão, ativos fora do S&P500/Nasdaq100 podem ser analisados sem setor
+                pass
 
             relative_strength = 0
             etf_ticker = "N/A"
