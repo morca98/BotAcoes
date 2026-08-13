@@ -308,8 +308,10 @@ class StockBot:
                                 conf_msg = f"🌟 <b>Confluência Detetada: {' + '.join(conf_list)}</b>" if conf_list else ""
                                 
                                 current_price_fmt = round(current_price, 2)
-                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Virgem Tocado! (< 0.2%)</b>\n"
-                                         f"🔥 <b>{ticker}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{sup['type']} Open (${sup['price']})</b>\n"
+                                ticker_esc = html.escape(ticker)
+                                type_esc = html.escape(sup['type'])
+                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Virgem Tocado! (&lt; 0.2%)</b>\n"
+                                         f"🔥 <b>{ticker_esc}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{type_esc} Open (${sup['price']})</b>\n"
                                          f"{vol_msg}\n"
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
@@ -343,8 +345,9 @@ class StockBot:
                     is_breakout = await loop.run_in_executor(None, self.scanner._check_breakout_2h, h1_data)
                     
                     if is_breakout:
+                        ticker_esc = html.escape(ticker)
                         alert = (f"🚀 <b>ALERTA DE ROMPIMENTO 2H!</b>\n"
-                                 f"🔥 <b>{ticker}</b> rompeu a resistência recente!\n"
+                                 f"🔥 <b>{ticker_esc}</b> rompeu a resistência recente!\n"
                                  f"   Preço: <code>${round(h1_data['Close'].iloc[-1], 2)}</code>\n"
                                  f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>\n"
                                  f"🔗 Analisa o gráfico antes de entrar!")
