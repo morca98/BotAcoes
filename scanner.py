@@ -74,6 +74,11 @@ class Scanner:
             logger.error(f"Erro ao obter índices da Wikipedia: {e}")
 
         final_list = list(set([t for t in tickers if isinstance(t, str) and t != 'nan']))
+        
+        # De-duplicação: Manter apenas GOOGL (Alphabet)
+        if "GOOGL" in final_list and "GOOG" in final_list:
+            final_list.remove("GOOG")
+            
         logger.info(f"Universo dinâmico: {len(final_list)} ativos. Setores mapeados: {len(self._ticker_sectors)}")
         return final_list
 

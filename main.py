@@ -39,6 +39,7 @@ class StockBot:
         # Monitorização de Saúde (Watchdog)
         self.last_scan_time = datetime.now(LISBON_TZ)
         self.last_support_check_time = datetime.now(LISBON_TZ)
+        self.scan_lock = asyncio.Lock() # Evitar scans simultâneos
         
         self.app = ApplicationBuilder().token(self.token).build()
 
@@ -81,10 +82,15 @@ class StockBot:
             except: pass
 
     async def run_scan(self, is_manual=False):
-        logger.info("A iniciar scan dinâmico...")
-        
-        try:
-            # 1. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
+        if self.scan_lock.locked():
+            logger.warning("Scan já em curso. A ignorar novo pedido.")
+            return
+
+        async with self.scan_lock:
+            logger.info("A iniciar scan dinâmico...")
+            
+            try:
+                # 1. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
             loop = asyncio.get_running_loop()
             full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
             full_universe = list(set(full_universe) | self.user_watchlist)
@@ -315,6 +321,8 @@ class StockBot:
 
     async def scheduler_loop(self):
         logger.info("Monitorização contínua (2h) com universo dinâmico.")
+        # Pequeno delay inicial para não colidir com o post_init
+        await asyncio.sleep(60) 
         while True:
             await self.run_scan(is_manual=False)
             await asyncio.sleep(7200)
