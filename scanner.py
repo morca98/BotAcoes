@@ -280,6 +280,9 @@ class Scanner:
             daily = tk.history(period="2y", interval="1d")
             if daily is None or len(daily) < 50: return None
             
+            # Dados 1h (para 4h e rompimentos) - Otimizado para 30 dias
+            h1 = tk.history(period="30d", interval="60m")
+            
             if current_price is None:
                 current_price = float(daily["Close"].dropna().iloc[-1])
             
@@ -318,21 +321,32 @@ class Scanner:
                     return None
 
             ema20 = float(daily["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
-            ema70 = float(daily["Close"].ewm(span=70, adjust=False).mean().iloc[-1])
-            ema200 = float(daily["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
-            rsi_daily = float(self._rsi(daily["Close"], 14).iloc[-1])
+            # Auditoria: Garantir que EMA 200 existe (mínimo 200 dias de dados)
+            ema200_series = daily["Close"].ewm(span=200, adjust=False).mean()
+            if len(ema200_series) < 200: return None
+            ema200 = float(ema200_series.iloc[-1])
             
-            if h1 is not None and len(h1) > 14:
+            rsi_daily_series = self._rsi(daily["Close"], 14)
+            if rsi_daily_series.empty: return None
+            rsi_daily = float(rsi_daily_series.iloc[-1])
+            
+            if h1 is not None and len(h1) >= 14:
+                # RSI 4h (aproximado por H1 resampled ou direto no H1 para velocidade)
                 rsi_h1_series = self._rsi(h1["Close"], 14)
                 rsi_h1 = float(rsi_h1_series.iloc[-1])
+                
+                # MACD H1 para divergência
                 exp1 = h1["Close"].ewm(span=12, adjust=False).mean()
                 exp2 = h1["Close"].ewm(span=26, adjust=False).mean()
                 macd_h1 = exp1 - exp2
+                
+                # Auditoria: Divergências e Breakouts
                 has_div_rsi = self._check_divergence(h1["Close"], rsi_h1_series)
                 has_div_macd = self._check_divergence(h1["Close"], macd_h1)
                 div_bullish = has_div_rsi or has_div_macd
                 breakout_2h = self._check_breakout_2h(h1)
             else:
+                # Se não houver dados intraday, usamos os diários como fallback conservador
                 rsi_h1 = rsi_daily
                 div_bullish = False
                 breakout_2h = False

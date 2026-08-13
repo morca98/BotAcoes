@@ -123,12 +123,13 @@ class StockBot:
         
         # Função para calcular pontuação de ranking
         def get_rank_score(s):
-            # Peso principal: RS Setorial
-            score = s['rs_sector'] * 10
-            # Bónus por indicadores positivos
-            if s['is_vcp']: score += 5
-            if s['div_bullish']: score += 3
-            if s['breakout_2h']: score += 10
+            import numpy as np
+            rs = s.get('rs_sector', 1.0)
+            if rs is None or (isinstance(rs, float) and np.isnan(rs)): rs = 1.0
+            score = rs * 10
+            if s.get('is_vcp'): score += 5
+            if s.get('div_bullish'): score += 3
+            if s.get('breakout_2h'): score += 10
             return score
 
         if is_manual:
