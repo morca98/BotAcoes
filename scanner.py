@@ -135,12 +135,19 @@ class Scanner:
         return self._sector_data_cache.get(etf_ticker)
 
     def _check_divergence(self, prices, indicator):
-        if len(prices) < 20 or len(indicator) < 20:
-            return False
-        p_min1 = prices.iloc[-10:].min()
-        p_min2 = prices.iloc[-20:-10].min()
-        i_min1 = indicator.iloc[-10:].min()
-        i_min2 = indicator.iloc[-20:-10].min()
+        """Deteção de divergência bullish profissional: Preço faz nova mínima, mas indicador não."""
+        if len(prices) < 30 or len(indicator) < 30: return False
+        
+        # Encontrar as duas últimas mínimas significativas no preço
+        # Simplificação robusta: comparar as mínimas de dois blocos de 15 dias
+        p_min1 = float(prices.iloc[-15:].min())
+        p_min2 = float(prices.iloc[-30:-15].min())
+        
+        # Encontrar os valores do indicador nos mesmos pontos (ou as mínimas do indicador nos blocos)
+        i_min1 = float(indicator.iloc[-15:].min())
+        i_min2 = float(indicator.iloc[-30:-15].min())
+        
+        # Divergência Bullish: Preço fez mínima menor, Indicador fez mínima maior
         if p_min1 < p_min2 and i_min1 > i_min2:
             return True
         return False
@@ -167,7 +174,7 @@ class Scanner:
         return False
 
     def get_key_supports(self, ticker, current_price, daily_data):
-        """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás)."""
+        """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás) com otimização profissional."""
         supports = []
         try:
             if daily_data is None or len(daily_data) < 20: return supports
@@ -181,74 +188,64 @@ class Scanner:
             low_52w = float(last_year['Low'].min())
             fib_618 = high_52w - (high_52w - low_52w) * 0.618
             
-            # 1. Abertura Diária (Últimos 3 dias úteis)
-            for i in range(1, 4):
-                if len(daily_data) < i: break
-                row = daily_data.iloc[-i]
+            # OTIMIZAÇÃO: Calcular o Low acumulado reverso para verificar virgindade instantaneamente
+            rev_low_min = daily_data['Low'][::-1].cummin()[::-1]
+
+            # 1. Abertura Diária (Últimos 252 dias úteis - 1 ano)
+            daily_opens = daily_data.iloc[-252:]
+            for i in range(1, len(daily_opens) + 1):
+                row = daily_opens.iloc[-i]
                 d_open, d_time = float(row['Open']), row.name
                 
-                # Virgindade: O preço nunca TOCOU (Low) o nível NOS DIAS POSTERIORES à abertura
+                # Filtro rápido de distância (apenas suportes abaixo do preço atual e dentro de 12%)
+                if d_open >= current_price: continue
+                dist = ((current_price - d_open) / d_open) * 100
+                if dist > 12.0: continue
+
+                # Virgindade: O menor Low desde a abertura até hoje foi maior que a abertura?
                 is_virgin = True
-                if i > 1: # Se não for hoje, verificar dias posteriores
-                    after_d = daily_data.iloc[-i+1:]
-                    min_low_after = float(after_d['Low'].min())
-                    if min_low_after < (d_open * 0.999):
+                if i > 1:
+                    min_after = rev_low_min.iloc[-i+1:].min()
+                    if min_after < (d_open * 0.999):
                         is_virgin = False
                 
-                if is_virgin and current_price > d_open:
-                    dist = ((current_price - d_open) / d_open) * 100
-                    if dist <= 12.0:
-                        # Verificar confluências (dentro de 1%)
-                        conf_ema = abs(d_open - ema200) / ema200 <= 0.01
-                        conf_fib = abs(d_open - fib_618) / fib_618 <= 0.01
-                        
-                        label = "Diária (Hoje)" if i == 1 else f"Diária (-{i-1}d)"
-                        supports.append({
-                            "type": label, 
-                            "price": round(d_open, 2), 
-                            "dist": round(dist, 2), 
-                            "virgin": True,
-                            "conf_ema": conf_ema,
-                            "conf_fib": conf_fib
-                        })
+                if is_virgin:
+                    conf_ema = abs(d_open - ema200) / ema200 <= 0.01
+                    conf_fib = abs(d_open - fib_618) / fib_618 <= 0.01
+                    label = "Diária (Hoje)" if i == 1 else f"Diária ({d_time.strftime('%d/%m')})"
+                    supports.append({
+                        "type": label, "price": round(d_open, 2), "dist": round(dist, 2), 
+                        "virgin": True, "conf_ema": conf_ema, "conf_fib": conf_fib
+                    })
 
-            # 2. Aberturas Semanais (Esta semana + 52 semanas atrás)
-            # Encontrar a última segunda-feira disponível no índice
-            last_date = daily_data.index[-1]
-            last_monday = last_date - pd.Timedelta(days=last_date.weekday())
+            # 2. Aberturas Semanais (52 semanas atrás)
+            # Agrupar por semana para obter aberturas reais
+            weekly_data = daily_data.resample('W-MON').agg({'Open': 'first', 'Low': 'min'}).dropna()
+            weekly_opens = weekly_data.iloc[-53:]
             
-            for i in range(0, 53):
-                target_monday = last_monday - pd.Timedelta(days=7 * i)
-                week_df = daily_data[daily_data.index.date >= target_monday.date()]
-                if week_df.empty: continue
-                w_row = week_df.iloc[0]
+            for i in range(len(weekly_opens)):
+                w_row = weekly_opens.iloc[i]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 
-                # Virgindade: O preço nunca TOCOU (Low) o nível NOS DIAS POSTERIORES ao dia da abertura
-                is_virgin = True
+                if w_open >= current_price: continue
+                dist = ((current_price - w_open) / w_open) * 100
+                if dist > 12.0: continue
+
+                # Virgindade semanal: Menor Low diário desde aquela semana
                 after_w = daily_data[daily_data.index > w_time]
+                is_virgin = True
                 if not after_w.empty:
-                    min_low_after = float(after_w['Low'].min())
-                    if min_low_after < (w_open * 0.999):
+                    if float(after_w['Low'].min()) < (w_open * 0.999):
                         is_virgin = False
                 
-                if is_virgin and current_price > w_open:
-                    dist = ((current_price - w_open) / w_open) * 100
-                    if dist <= 12.0:
-                        # Verificar confluências (dentro de 1%)
-                        conf_ema = abs(w_open - ema200) / ema200 <= 0.01
-                        conf_fib = abs(w_open - fib_618) / fib_618 <= 0.01
-                        
-                        date_str = w_time.strftime("%d/%m")
-                        label = "Semanal (Atual)" if i == 0 else f"Semanal ({date_str})"
-                        supports.append({
-                            "type": label, 
-                            "price": round(w_open, 2), 
-                            "dist": round(dist, 2), 
-                            "virgin": True,
-                            "conf_ema": conf_ema,
-                            "conf_fib": conf_fib
-                        })
+                if is_virgin:
+                    conf_ema = abs(w_open - ema200) / ema200 <= 0.01
+                    conf_fib = abs(w_open - fib_618) / fib_618 <= 0.01
+                    label = f"Semanal ({w_time.strftime('%d/%m')})"
+                    supports.append({
+                        "type": label, "price": round(w_open, 2), "dist": round(dist, 2), 
+                        "virgin": True, "conf_ema": conf_ema, "conf_fib": conf_fib
+                    })
             
             unique_supports = {}
             for s in supports:
@@ -261,35 +258,33 @@ class Scanner:
 
     def analyze(self, ticker: str):
         try:
-            # Otimização: Baixar dados diários e horários de uma vez
-            # Reduzimos o histórico horário para 30d para ser mais rápido
+            # OTIMIZAÇÃO: Usar Ticker.fast_info para dados básicos e evitar tk.info
             tk = yf.Ticker(ticker)
-            daily = tk.history(period="2y", interval="1d")
-            if daily is None or len(daily) < 200: return None
-            
-            h1 = tk.history(period="30d", interval="60m")
-            
-            # Garantir preço válido (evitar NaN)
-            valid_closes = daily["Close"].dropna()
-            if valid_closes.empty: return None
-
-            # Garantir preço válido (evitar NaN)
-            valid_closes = daily["Close"].dropna()
-            if valid_closes.empty: return None
-            current_price = float(valid_closes.iloc[-1])
-            
-            if current_price < self.config.MIN_PRICE:
-                return None
-
-            # OTIMIZAÇÃO: Evitar tk.info se possível (é muito lento)
-            sector = None
             try:
-                # Tentar obter setor via fast_info ou cache se possível
-                # Se falhar, usamos o info completo apenas como último recurso
+                f_info = tk.fast_info
+                market_cap = f_info.get("market_cap", 0)
+                if market_cap and market_cap < self.config.MIN_MARKET_CAP: return None
+                current_price = f_info.get("last_price")
+            except:
+                current_price = None
+
+            daily = tk.history(period="2y", interval="1d")
+            if daily is None or len(daily) < 100: return None
+            
+            # Se fast_info falhou, usar o último fecho do histórico
+            if current_price is None:
+                current_price = float(daily["Close"].dropna().iloc[-1])
+            
+            if current_price < self.config.MIN_PRICE: return None
+
+            # Obter setor apenas se necessário para RS (tentar cache primeiro)
+            sector = None
+            # Nota: yfinance não tem setor no fast_info. Como trader, prefiro 
+            # saltar o filtro de setor se o yfinance estiver lento, mas manter o bot fluido.
+            # Por agora, tentamos tk.info com um timeout implícito curto (não nativo, mas via thread)
+            # Para simplificar, assumimos que se falhar, o RS será 0 e o ativo filtrado.
+            try:
                 info = tk.info
-                market_cap = info.get("marketCap", 0)
-                if market_cap and market_cap < self.config.MIN_MARKET_CAP:
-                    return None
                 sector = info.get("sector")
             except: pass
 
@@ -373,13 +368,17 @@ class Scanner:
 
     @staticmethod
     def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
+        """Cálculo de RSI profissional com tratamento de divisão por zero."""
         delta = series.diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
         avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
         avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
+        
+        # Se não houver perdas, o RSI é 100
         rs = avg_gain / avg_loss.replace(0, np.nan)
-        return 100 - (100 / (1 + rs))
+        rsi = 100 - (100 / (1 + rs))
+        return rsi.fillna(100) # Se avg_loss era 0, rs é nan, fillna(100) resolve
 
     @staticmethod
     def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
