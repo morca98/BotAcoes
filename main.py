@@ -34,6 +34,7 @@ class StockBot:
         self.active_breakouts = set()
         self.active_signals = {} # Tickers que passaram no último scan
         self.notified_touches = set() # Evitar spam de toques
+        self.notified_breakouts = set() # Evitar spam de rompimentos
         self.user_watchlist = self._load_watchlist()
         
         # Monitorização de Saúde (Watchdog)
@@ -144,6 +145,7 @@ class StockBot:
         self.active_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']}
         self.active_signals = current_signals # Guardar para monitorização de toques
         self.notified_touches = set() # Resetar memória de toques no novo scan
+        self.notified_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']} # Sincronizar rompimentos notificados
 
         msg = ""
         
@@ -280,8 +282,9 @@ class StockBot:
                     
                     current_price = float(current_data['Close'].iloc[-1])
                     
-                    # Verificar suportes (DO/WO)
-                    supports = await loop.run_in_executor(None, self.scanner.get_key_supports, ticker, current_price)
+                    # Obter histórico diário para suportes
+                    daily_data = tk.history(period="1y", interval="1d")
+                    supports = await loop.run_in_executor(None, self.scanner.get_key_supports, ticker, current_price, daily_data)
                     
                     for sup in supports:
                         # Notificar apenas se for VIRGEM e estiver muito próximo (< 0.2%)
@@ -297,27 +300,62 @@ class StockBot:
                                         vol_spike = True
                                 except: pass
                                 
-                                vol_msg = "✅ *Defesa Institucional (Volume Spike!)*" if vol_spike else "⚠️ Sem pico de volume"
+                                vol_msg = "✅ <b>Defesa Institucional (Volume Spike!)</b>" if vol_spike else "⚠️ Sem pico de volume"
                                 
                                 conf_list = []
                                 if sup.get('conf_ema'): conf_list.append("EMA 200 🎯")
                                 if sup.get('conf_fib'): conf_list.append("FIB 61.8% 📐")
-                                conf_msg = f"🌟 *Confluência Detetada: {' + '.join(conf_list)}*" if conf_list else ""
+                                conf_msg = f"🌟 <b>Confluência Detetada: {' + '.join(conf_list)}</b>" if conf_list else ""
                                 
                                 current_price_fmt = round(current_price, 2)
-                                alert = (f"🎯 *ZONA DE COMPRA - Suporte Virgem Tocado! (< 0.2%)*\n"
-                                         f"🔥 *{ticker}* @ `${current_price_fmt}` encostou em: *{sup['type']} Open (${sup['price']})*\n"
-                                         f"   {vol_msg}\n"
-                                         f"   {conf_msg}\n"
-                                         f"   RS/Setor: `{s['rs_sector']}` | RSI D: `{s['rsi_daily']}`")
-                                await self.send_direct_msg(alert.replace("\n   \n", "\n"))
+                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Virgem Tocado! (< 0.2%)</b>\n"
+                                         f"🔥 <b>{ticker}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{sup['type']} Open (${sup['price']})</b>\n"
+                                         f"{vol_msg}\n"
+                                         f"{conf_msg}\n"
+                                         f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
+                                
+                                await self.send_direct_msg(alert)
                                 self.notified_touches.add(touch_key)
-                
                 self.last_support_check_time = datetime.now(LISBON_TZ) # Heartbeat
             except Exception as e:
                 logger.error(f"Erro no monitor de suportes: {e}")
             
             await asyncio.sleep(300) # Verificar a cada 5 minutos
+
+    async def breakout_monitor_loop(self):
+        """Monitoriza rompimentos 2h a cada 15 minutos para ativos na lista."""
+        logger.info("Monitorização de rompimentos iniciada (15 min).")
+        while True:
+            try:
+                if not self.active_signals:
+                    await asyncio.sleep(900)
+                    continue
+
+                loop = asyncio.get_running_loop()
+                for ticker, s in list(self.active_signals.items()):
+                    if ticker in self.notified_breakouts: continue
+
+                    import yfinance as yf
+                    tk = yf.Ticker(ticker)
+                    h1_data = tk.history(period="5d", interval="60m")
+                    if h1_data.empty: continue
+
+                    is_breakout = await loop.run_in_executor(None, self.scanner._check_breakout_2h, h1_data)
+                    
+                    if is_breakout:
+                        alert = (f"🚀 <b>ALERTA DE ROMPIMENTO 2H!</b>\n"
+                                 f"🔥 <b>{ticker}</b> rompeu a resistência recente!\n"
+                                 f"   Preço: <code>${round(h1_data['Close'].iloc[-1], 2)}</code>\n"
+                                 f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>\n"
+                                 f"🔗 Analisa o gráfico antes de entrar!")
+                        
+                        await self.send_direct_msg(alert)
+                        self.notified_breakouts.add(ticker)
+                        await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Erro no monitor de rompimentos: {e}")
+            
+            await asyncio.sleep(900) # Verificar a cada 15 minutos
 
     async def scheduler_loop(self):
         logger.info("Monitorização contínua (2h) com universo dinâmico.")
@@ -353,6 +391,7 @@ class StockBot:
         # Iniciar loops de agendamento
         asyncio.create_task(self.scheduler_loop())
         asyncio.create_task(self.support_monitor_loop())
+        asyncio.create_task(self.breakout_monitor_loop())
         asyncio.create_task(self.watchdog_loop())
 
     def run(self):
