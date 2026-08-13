@@ -204,6 +204,12 @@ class StockBot:
         vcp_status = "✅ Sim" if s['is_vcp'] else "❌ Não"
         break_status = "🚀 <b>ROMPIMENTO 2H!</b>" if s['breakout_2h'] else ""
         
+        # Sistema de Estrelas
+        stars = "⭐" * s.get('stars', 1)
+        
+        # Alerta de Exaustão
+        stretch_msg = "\n⚠️ <b>ATIVO ESTICADO (Risco de Pullback)</b>" if s.get('is_stretched') else ""
+        
         ticker = html.escape(str(s['ticker']))
         sector_etf = html.escape(str(s['sector_etf']))
         
@@ -211,17 +217,17 @@ class StockBot:
         if s.get('key_supports'):
             virgin_supports = [sup for sup in s['key_supports'] if sup.get('virgin')]
             if virgin_supports:
-                # Usar <tg-spoiler> para esconder os suportes
-                support_msg = "🛡️ <b>Suportes Virgens (Clica para ver):</b>\n<tg-spoiler>"
+                support_msg = "🛡️ <b>Zonas de Interesse (Clica para ver):</b>\n<tg-spoiler>"
                 for sup in virgin_supports:
                     confluences = []
                     if sup.get('conf_ema'): confluences.append("EMA 200 🎯")
                     if sup.get('conf_fib'): confluences.append("FIB 61.8% 📐")
+                    if "AVWAP" in sup['type']: confluences.append("Institucional 🏛️")
                     conf_text = f" ({' + '.join(confluences)})" if confluences else ""
                     support_msg += f"   └ {html.escape(sup['type'])}: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
                 support_msg += "</tg-spoiler>"
 
-        return (f"🔹 <b>{ticker}</b> @ <code>${s['price']}</code> {break_status}\n"
+        return (f"🔹 <b>{ticker}</b> {stars} @ <code>${s['price']}</code> {break_status}{stretch_msg}\n"
                 f"   RS/Setor ({sector_etf}): <code>{s['rs_sector']}</code>\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
                 f"{support_msg}"

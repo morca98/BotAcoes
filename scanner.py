@@ -183,6 +183,25 @@ class Scanner:
             return True
         return False
 
+    def _calculate_avwap(self, df, anchor_type="low"):
+        """Calcula o Anchored VWAP a partir do topo ou fundo das últimas 4 semanas."""
+        if len(df) < 20: return None
+        # Últimas 4 semanas (aprox 20 dias úteis)
+        recent = df.iloc[-20:]
+        if anchor_type == "low":
+            anchor_idx = recent['Low'].idxmin()
+        else:
+            anchor_idx = recent['High'].idxmax()
+            
+        anchor_df = df.loc[anchor_idx:]
+        if anchor_df.empty: return None
+        
+        # Fórmula VWAP: Sum(Price * Volume) / Sum(Volume)
+        # Usamos o preço médio (Typical Price)
+        tp = (anchor_df['High'] + anchor_df['Low'] + anchor_df['Close']) / 3
+        vwap = (tp * anchor_df['Volume']).cumsum() / anchor_df['Volume'].cumsum()
+        return float(vwap.iloc[-1])
+
     def get_key_supports(self, ticker, current_price, daily_data):
         """Calcula suportes virgens de aberturas diárias e semanais (até 1 ano atrás) com otimização profissional."""
         supports = []
@@ -361,8 +380,38 @@ class Scanner:
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
+            # 4. Anchored VWAP (Topos e Fundos das últimas 4 semanas)
+            avwap_low = self._calculate_avwap(daily, "low")
+            avwap_high = self._calculate_avwap(daily, "high")
+            
             # Calcular suportes virgens usando os dados já carregados
             supports = self.get_key_supports(ticker, current_price, daily)
+            
+            # Adicionar AVWAP como suporte se estiver próximo
+            if avwap_low and avwap_low < current_price:
+                dist_avwap = ((current_price - avwap_low) / avwap_low) * 100
+                if dist_avwap <= 5.0:
+                    supports.append({
+                        "type": "AVWAP Fundo", "price": round(avwap_low, 2), 
+                        "dist": round(dist_avwap, 2), "virgin": True, 
+                        "conf_ema": False, "conf_fib": False
+                    })
+
+            # 5. Sistema de Estrelas (Scoring)
+            score = 1 # Base por passar nos filtros
+            if relative_strength > 1.2: score += 1
+            if is_vcp: score += 1
+            if div_bullish: score += 1
+            if breakout_2h: score += 1
+            
+            # Confluência de suportes aumenta estrelas
+            has_confluence = any(s['conf_ema'] or s['conf_fib'] or "AVWAP" in s['type'] for s in supports if s['dist'] < 2.0)
+            if has_confluence: score += 1
+            
+            stars = min(5, score)
+
+            # 6. Filtro de Exaustão
+            is_stretched = dist_ema20 > 6.0 # Mais de 6% longe da EMA 20
 
             # Validação final para evitar NaN no relatório
             metrics = [current_price, rsi_daily, rsi_h1, atr_pct, relative_strength, dist_ema20]
@@ -371,10 +420,8 @@ class Scanner:
 
             if rsi_daily > self.config.MAX_RSI_DAILY: return None
             if rsi_h1 > self.config.MAX_RSI_4H: return None
-            if dist_ema20 > self.config.MAX_EMA20_DIST_PCT: return None
             # O preço deve estar acima da EMA 200 para garantir tendência de longo prazo
             if current_price < ema200: return None
-            
             if atr_pct < self.config.MIN_ATR_PCT: return None
 
             return {
@@ -390,6 +437,8 @@ class Scanner:
                 "is_vcp": is_vcp,
                 "breakout_2h": breakout_2h,
                 "key_supports": supports,
+                "stars": stars,
+                "is_stretched": is_stretched,
                 "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
             }
         except Exception as e:
