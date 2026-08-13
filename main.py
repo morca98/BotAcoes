@@ -149,16 +149,17 @@ class StockBot:
 
         msg = ""
         
-        # Função para calcular pontuação de ranking
+        # Função para calcular pontuação de ranking (Prioridade: Estrelas > RS)
         def get_rank_score(s):
             import numpy as np
+            # Critério 1: Estrelas (Peso 1000 para garantir que 5 estrelas > 4 estrelas sempre)
+            stars = s.get('stars', 1)
+            
+            # Critério 2: RS Setorial (Desempate)
             rs = s.get('rs_sector', 1.0)
             if rs is None or (isinstance(rs, float) and np.isnan(rs)): rs = 1.0
-            score = rs * 10
-            if s.get('is_vcp'): score += 5
-            if s.get('div_bullish'): score += 3
-            if s.get('breakout_2h'): score += 10
-            return score
+            
+            return (stars * 1000) + (rs * 10)
 
         if is_manual:
             header = f"🔍 <b>Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)</b> — {now}\n"
