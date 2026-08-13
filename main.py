@@ -153,38 +153,43 @@ class StockBot:
             return score
 
         if is_manual:
-            msg = f"🔍 <b>Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)</b> — {now}\n"
+            header = f"🔍 <b>Scan Completo ({len(filtered_universe)} de {len(full_universe)} ativos)</b> — {now}\n"
+            await self.send_direct_msg(header)
+            
             if not current_signals:
-                msg += "Nenhuma ação cumpre os critérios no momento."
+                await self.send_direct_msg("Nenhuma ação cumpre os critérios no momento.")
             else:
                 sorted_signals = sorted(current_signals.values(), key=get_rank_score, reverse=True)
                 for s in sorted_signals:
-                    msg += self._format_signal(s)
+                    await self.send_direct_msg(self._format_signal(s))
+                    await asyncio.sleep(0.3) # Delay para evitar rate limit
         else:
             if new_tickers or new_breakouts:
-                msg = f"🔔 <b>Atualização Importante</b> — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
+                header = f"🔔 <b>Atualização Importante</b> — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
+                await self.send_direct_msg(header)
+                
                 if new_tickers:
-                    msg += "🌟 <b>Novos Ativos na Lista (Ordenados por Força):</b>\n"
+                    await self.send_direct_msg("🌟 <b>Novos Ativos na Lista:</b>")
                     sorted_new = sorted([current_signals[t] for t in new_tickers], key=get_rank_score, reverse=True)
                     for s in sorted_new:
-                        msg += self._format_signal(s)
+                        await self.send_direct_msg(self._format_signal(s))
+                        await asyncio.sleep(0.3)
 
                 if new_breakouts:
-                    msg += "\n🚀 <b>Rompimentos 2h Detetados:</b>\n"
+                    await self.send_direct_msg("\n🚀 <b>Rompimentos 2h Detetados:</b>")
                     sorted_breakouts = sorted([current_signals[t] for t in new_breakouts], key=get_rank_score, reverse=True)
                     for s in sorted_breakouts:
                         if s['ticker'] in new_tickers:
-                            msg += f"🔹 <b>{s['ticker']}</b> também confirmou rompimento!\n"
+                            await self.send_direct_msg(f"🔹 <b>{s['ticker']}</b> também confirmou rompimento!")
                         else:
-                            msg += self._format_signal(s)
+                            await self.send_direct_msg(self._format_signal(s))
+                        await asyncio.sleep(0.3)
             else:
                 logger.info("Nenhuma atualização importante encontrada.")
-                if progress_msg: await progress_msg.delete()
-                return
-
-        if msg:
-            await self.send_direct_msg(msg)
-            if progress_msg: await progress_msg.delete()
+        
+        if progress_msg:
+            try: await progress_msg.delete()
+            except: pass
 
     def _format_signal(self, s):
         div_status = "✅ Sim" if s['div_bullish'] else "❌ Não"
@@ -198,19 +203,21 @@ class StockBot:
         if s.get('key_supports'):
             virgin_supports = [sup for sup in s['key_supports'] if sup.get('virgin')]
             if virgin_supports:
-                support_msg = "🛡️ <b>Suportes Virgens Próximos:</b>\n"
+                # Usar <tg-spoiler> para esconder os suportes
+                support_msg = "🛡️ <b>Suportes Virgens (Clica para ver):</b>\n<tg-spoiler>"
                 for sup in virgin_supports:
                     confluences = []
                     if sup.get('conf_ema'): confluences.append("EMA 200 🎯")
                     if sup.get('conf_fib'): confluences.append("FIB 61.8% 📐")
-                    conf_text = f" (Confluência: {' + '.join(confluences)})" if confluences else ""
-                    support_msg += f"   └ {html.escape(sup['type'])} Open: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
+                    conf_text = f" ({' + '.join(confluences)})" if confluences else ""
+                    support_msg += f"   └ {html.escape(sup['type'])}: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
+                support_msg += "</tg-spoiler>"
 
         return (f"🔹 <b>{ticker}</b> @ <code>${s['price']}</code> {break_status}\n"
                 f"   RS/Setor ({sector_etf}): <code>{s['rs_sector']}</code>\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
                 f"{support_msg}"
-                f"   ATR%: <code>{s['atr_pct']}%</code> | RSI D: <code>{s['rsi_daily']}</code>\n\n")
+                f"   ATR%: <code>{s['atr_pct']}%</code> | RSI D: <code>{s['rsi_daily']}</code>")
 
     # --- Comandos de Watchlist ---
     async def cmd_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
