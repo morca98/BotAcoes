@@ -145,9 +145,6 @@ class Scanner:
                     else:
                         logger.error(f"Erro no download do chunk: {e}")
                         break
-            except Exception as e:
-                logger.error(f"Erro ao processar lote de liquidez: {e}")
-                continue
 
         df = pd.DataFrame(data)
         logger.info(f"Dados de liquidez obtidos para {len(df)} ativos.")
