@@ -112,24 +112,23 @@ class Scanner:
             retries = 3
             while retries > 0:
                 try:
-                    # Período de 1d é suficiente e muito mais rápido
-                    batch = yf.download(chunk, period="1d", group_by='ticker', threads=True, progress=False, timeout=30)
+                    # Usar 5d para garantir dados mesmo em feriados ou mercados fechados
+                    batch = yf.download(chunk, period="5d", group_by='ticker', threads=True, progress=False, timeout=30)
                     
                     for t in chunk:
                         try:
-                            # Lidar com diferentes formatos de retorno do yfinance
                             if isinstance(batch.columns, pd.MultiIndex):
                                 ticker_data = batch[t]
                             else:
                                 ticker_data = batch
                                 
-                            if not ticker_data.empty:
-                                # Tentar obter o valor mais recente não nulo
+                            if ticker_data is not None and not ticker_data.empty:
                                 valid_data = ticker_data.dropna(subset=['Close', 'Volume'])
                                 if not valid_data.empty:
+                                    # Média dos últimos 5 dias para volume mais estável
+                                    avg_vol = valid_data['Volume'].mean()
                                     last_close = valid_data['Close'].iloc[-1]
-                                    last_vol = valid_data['Volume'].iloc[-1]
-                                    dollar_vol = last_close * last_vol
+                                    dollar_vol = last_close * avg_vol
                                     if dollar_vol > 0:
                                         data.append({'ticker': t, 'dollar_vol': dollar_vol})
                         except:
@@ -163,7 +162,11 @@ class Scanner:
         if etf_ticker not in self._sector_data_cache:
             try:
                 etf = yf.Ticker(etf_ticker)
-                self._sector_data_cache[etf_ticker] = etf.history(period="2y", interval="1d")
+                data = etf.history(period="2y", interval="1d")
+                if data is not None and not data.empty:
+                    self._sector_data_cache[etf_ticker] = data.dropna(subset=['Close'])
+                else:
+                    return None
             except Exception as e:
                 logger.error(f"Erro ao obter dados do ETF {etf_ticker}: {e}")
                 return None
@@ -378,21 +381,20 @@ class Scanner:
                 # OTIMIZAÇÃO EXTREMA: Usar mapeamento de setores da Wikipedia e fast_info
                 tk = yf.Ticker(ticker)
                 
-                # 1. Tentar obter preço e market cap rápido
+                # 1. Tentar obter preço e market cap
                 try:
                     f_info = tk.fast_info
-                    market_cap = f_info.get("market_cap", 0)
+                    market_cap = f_info.get("market_cap")
                     currency = f_info.get("currency", "USD")
-                    
-                    # Filtro de Market Cap: 500M EUR ou 2B USD (conforme config)
-                    min_mc = self.config.MIN_MARKET_CAP
-                    if currency == "EUR":
-                        min_mc = 500_000_000 # Filtro específico para Europa
-                    
-                    if market_cap and market_cap < min_mc: return None
                     current_price = f_info.get("last_price")
+                    
+                    # Fallback para European stocks onde fast_info falha frequentemente
+                    if market_cap is None or current_price is None:
+                        # Tentar obter do tk.info apenas se necessário (lento)
+                        # Ou assumir que se está no STOXX 600, cumpre o critério
+                        pass
                 except:
-                    market_cap = 0
+                    market_cap = None
                     current_price = None
                     currency = "USD"
 
@@ -400,8 +402,27 @@ class Scanner:
                 daily = tk.history(period="2y", interval="1d")
                 if daily is None or len(daily) < 50: return None
                 
+                # Limpeza de NaNs no final (comum em mercados fechados ou erros de dados)
+                daily = daily.dropna(subset=['Close', 'High', 'Low', 'Open'])
+                if len(daily) < 50: return None
+
+                # Se o preço falhou no fast_info, pegamos do histórico
+                if current_price is None or np.isnan(current_price):
+                    current_price = float(daily["Close"].iloc[-1])
+                
+                # Se o market_cap falhou, mas é STOXX 600, permitimos passar
+                # (A maioria das STOXX 600 tem > 500M€)
+                is_stoxx = any(ticker.endswith(s) for s in [".DE", ".PA", ".L", ".LS", ".MC", ".MI", ".AS", ".SW", ".ST", ".CO", ".OL", ".HE", ".VI", ".BR", ".IR", ".WA", ".LU", ".AT", ".TA"])
+                
+                if market_cap is not None:
+                    # Se for europeu (pelo sufixo ou moeda), usamos 500M
+                    min_mc = 500_000_000 if (currency == "EUR" or is_stoxx) else self.config.MIN_MARKET_CAP
+                    if market_cap < min_mc: return None
+                
                 # Dados 1h (para 4h e rompimentos) - Otimizado para 30 dias
                 h1 = tk.history(period="30d", interval="60m")
+                if h1 is not None:
+                    h1 = h1.dropna(subset=['Close'])
                 break # Sucesso
             except Exception as e:
                 if "429" in str(e) or "Too Many Requests" in str(e):
@@ -423,6 +444,25 @@ class Scanner:
             
             if current_price < self.config.MIN_PRICE: return None
 
+            # --- NOVOS FILTROS OBRIGATÓRIOS ---
+            # 1. Filtro de Volatilidade Anual (High-Low range > 50%)
+            year_data = daily.iloc[-252:]
+            if len(year_data) >= 100:
+                y_high = year_data['High'].max()
+                y_low = year_data['Low'].min()
+                annual_vol = (y_high - y_low) / y_low
+                if annual_vol < 0.5: 
+                    logger.debug(f"Rejeitado {ticker}: Volatilidade {annual_vol:.2%} < 50%")
+                    return None
+            
+            # 2. RSI Diário < 50
+            rsi_daily_series = self._rsi(daily["Close"], 14)
+            if rsi_daily_series.empty: return None
+            rsi_daily = float(rsi_daily_series.iloc[-1])
+            if rsi_daily >= 50:
+                logger.debug(f"Rejeitado {ticker}: RSI Diário {rsi_daily:.2f} >= 50")
+                return None
+            
             # 3. Obter Setor (Prioridade: Wikipedia Cache -> yfinance fast_info se disponível -> Skip)
             sector = self._ticker_sectors.get(ticker)
             if not sector:
@@ -460,14 +500,15 @@ class Scanner:
             if len(ema200_series) < 200: return None
             ema200 = float(ema200_series.iloc[-1])
             
-            rsi_daily_series = self._rsi(daily["Close"], 14)
-            if rsi_daily_series.empty: return None
-            rsi_daily = float(rsi_daily_series.iloc[-1])
-            
             if h1 is not None and len(h1) >= 14:
                 # RSI 4h (aproximado por H1 resampled ou direto no H1 para velocidade)
                 rsi_h1_series = self._rsi(h1["Close"], 14)
                 rsi_h1 = float(rsi_h1_series.iloc[-1])
+                
+                # Filtro RSI 4h < 50
+                if rsi_h1 >= 50:
+                    logger.debug(f"Rejeitado {ticker}: RSI 4h {rsi_h1:.2f} >= 50")
+                    return None
                 
                 # MACD H1 para divergência
                 exp1 = h1["Close"].ewm(span=12, adjust=False).mean()
