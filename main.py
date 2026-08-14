@@ -125,22 +125,33 @@ class StockBot:
                 total_to_analyze = len(filtered_universe)
                 logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")
                 
-                semaphore = asyncio.Semaphore(15) # Máximo de 15 análises simultâneas
+                semaphore = asyncio.Semaphore(5) # Reduzido para evitar Rate Limit
                 progress_msg = None
                 if is_manual:
-                    progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text="⏳ Progresso: 0%")
+                    progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text=f"⏳ Progresso: 0% (0/{total_to_analyze})")
 
+                analyzed_count = 0
                 async def semi_analyze(ticker, index):
+                    nonlocal analyzed_count
                     async with semaphore:
                         try:
+                            await asyncio.sleep(0.5) # Delay entre pedidos
                             res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
-                            if index % 50 == 0 and progress_msg:
-                                pct = int((index / total_to_analyze) * 100)
-                                await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({index}/{total_to_analyze})")
                             return ticker, res
                         except Exception as e:
+                            error_str = str(e)
+                            if "Too Many Requests" in error_str or "429" in error_str:
+                                logger.warning(f"Rate limit detetado. A aguardar 15s...")
+                                await asyncio.sleep(15)
                             logger.error(f"Erro em {ticker}: {e}")
                             return ticker, None
+                        finally:
+                            analyzed_count += 1
+                            if analyzed_count % 20 == 0 or analyzed_count == total_to_analyze:
+                                if progress_msg:
+                                    pct = int((analyzed_count / total_to_analyze) * 100)
+                                    try: await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({analyzed_count}/{total_to_analyze})")
+                                    except: pass
 
                 tasks = [semi_analyze(t, i) for i, t in enumerate(filtered_universe)]
                 results = await asyncio.gather(*tasks)

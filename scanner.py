@@ -104,33 +104,47 @@ class Scanner:
             return tickers
 
         data = []
-        # Chunk menor para evitar timeouts de rede
-        chunk_size = 100
+        # Chunk menor para evitar timeouts e rate limits
+        chunk_size = 50
+        import time
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i + chunk_size]
-            try:
-                # Período de 1d é suficiente e muito mais rápido
-                batch = yf.download(chunk, period="1d", group_by='ticker', threads=True, progress=False, timeout=20)
-                
-                for t in chunk:
-                    try:
-                        # Lidar com diferentes formatos de retorno do yfinance
-                        if isinstance(batch.columns, pd.MultiIndex):
-                            ticker_data = batch[t]
-                        else:
-                            ticker_data = batch
-                            
-                        if not ticker_data.empty:
-                            # Tentar obter o valor mais recente não nulo
-                            valid_data = ticker_data.dropna(subset=['Close', 'Volume'])
-                            if not valid_data.empty:
-                                last_close = valid_data['Close'].iloc[-1]
-                                last_vol = valid_data['Volume'].iloc[-1]
-                                dollar_vol = last_close * last_vol
-                                if dollar_vol > 0:
-                                    data.append({'ticker': t, 'dollar_vol': dollar_vol})
-                    except:
-                        continue
+            retries = 3
+            while retries > 0:
+                try:
+                    # Período de 1d é suficiente e muito mais rápido
+                    batch = yf.download(chunk, period="1d", group_by='ticker', threads=True, progress=False, timeout=30)
+                    
+                    for t in chunk:
+                        try:
+                            # Lidar com diferentes formatos de retorno do yfinance
+                            if isinstance(batch.columns, pd.MultiIndex):
+                                ticker_data = batch[t]
+                            else:
+                                ticker_data = batch
+                                
+                            if not ticker_data.empty:
+                                # Tentar obter o valor mais recente não nulo
+                                valid_data = ticker_data.dropna(subset=['Close', 'Volume'])
+                                if not valid_data.empty:
+                                    last_close = valid_data['Close'].iloc[-1]
+                                    last_vol = valid_data['Volume'].iloc[-1]
+                                    dollar_vol = last_close * last_vol
+                                    if dollar_vol > 0:
+                                        data.append({'ticker': t, 'dollar_vol': dollar_vol})
+                        except:
+                            continue
+                    
+                    time.sleep(1) # Pequena pausa entre chunks
+                    break # Sucesso, sai do loop de retries
+                except Exception as e:
+                    if "429" in str(e) or "Too Many Requests" in str(e):
+                        logger.warning(f"Rate limit no filtro de liquidez. A aguardar 20s... (Tentativas restantes: {retries})")
+                        time.sleep(20)
+                        retries -= 1
+                    else:
+                        logger.error(f"Erro no download do chunk: {e}")
+                        break
             except Exception as e:
                 logger.error(f"Erro ao processar lote de liquidez: {e}")
                 continue
@@ -360,34 +374,52 @@ class Scanner:
         return supports
 
     def analyze(self, ticker: str):
-        try:
-            # OTIMIZAÇÃO EXTREMA: Usar mapeamento de setores da Wikipedia e fast_info
-            tk = yf.Ticker(ticker)
-            
-            # 1. Tentar obter preço e market cap rápido
+        import time
+        retries = 2
+        while retries >= 0:
             try:
-                f_info = tk.fast_info
-                market_cap = f_info.get("market_cap", 0)
-                currency = f_info.get("currency", "USD")
+                # OTIMIZAÇÃO EXTREMA: Usar mapeamento de setores da Wikipedia e fast_info
+                tk = yf.Ticker(ticker)
                 
-                # Filtro de Market Cap: 500M EUR ou 2B USD (conforme config)
-                min_mc = self.config.MIN_MARKET_CAP
-                if currency == "EUR":
-                    min_mc = 500_000_000 # Filtro específico para Europa
-                
-                if market_cap and market_cap < min_mc: return None
-                current_price = f_info.get("last_price")
-            except:
-                market_cap = 0
-                current_price = None
-                currency = "USD"
+                # 1. Tentar obter preço e market cap rápido
+                try:
+                    f_info = tk.fast_info
+                    market_cap = f_info.get("market_cap", 0)
+                    currency = f_info.get("currency", "USD")
+                    
+                    # Filtro de Market Cap: 500M EUR ou 2B USD (conforme config)
+                    min_mc = self.config.MIN_MARKET_CAP
+                    if currency == "EUR":
+                        min_mc = 500_000_000 # Filtro específico para Europa
+                    
+                    if market_cap and market_cap < min_mc: return None
+                    current_price = f_info.get("last_price")
+                except:
+                    market_cap = 0
+                    current_price = None
+                    currency = "USD"
 
-            # 2. Obter histórico (essencial para indicadores)
-            daily = tk.history(period="2y", interval="1d")
-            if daily is None or len(daily) < 50: return None
-            
-            # Dados 1h (para 4h e rompimentos) - Otimizado para 30 dias
-            h1 = tk.history(period="30d", interval="60m")
+                # 2. Obter histórico (essencial para indicadores)
+                daily = tk.history(period="2y", interval="1d")
+                if daily is None or len(daily) < 50: return None
+                
+                # Dados 1h (para 4h e rompimentos) - Otimizado para 30 dias
+                h1 = tk.history(period="30d", interval="60m")
+                break # Sucesso
+            except Exception as e:
+                if "429" in str(e) or "Too Many Requests" in str(e):
+                    if retries > 0:
+                        logger.warning(f"Rate limit em {ticker}. A aguardar 10s... ({retries} restam)")
+                        time.sleep(10)
+                        retries -= 1
+                        continue
+                    else:
+                        raise e # Propagar para o loop principal
+                else:
+                    logger.error(f"Erro ao obter dados para {ticker}: {e}")
+                    return None
+
+        try:
             
             if current_price is None:
                 current_price = float(daily["Close"].dropna().iloc[-1])
