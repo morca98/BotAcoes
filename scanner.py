@@ -183,6 +183,25 @@ class Scanner:
             return True
         return False
 
+    def check_reversal_30m(self, ticker):
+        """Verifica se a última vela de 30min tem Mínima e Máxima superiores à anterior."""
+        try:
+            tk = yf.Ticker(ticker)
+            # Obter dados de 30 minutos (últimos 2 dias para garantir dados suficientes)
+            df = tk.history(period="2d", interval="30m")
+            if len(df) < 2: return False
+            
+            last_candle = df.iloc[-1]
+            prev_candle = df.iloc[-2]
+            
+            # Critério: Mínima Superior E Máxima Superior
+            if last_candle['Low'] > prev_candle['Low'] and last_candle['High'] > prev_candle['High']:
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Erro ao verificar reversão 30m para {ticker}: {e}")
+            return False
+
     def _calculate_avwap(self, df, anchor_type="low"):
         """Calcula o Anchored VWAP a partir do topo ou fundo das últimas 4 semanas."""
         if len(df) < 20: return None

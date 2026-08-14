@@ -321,7 +321,13 @@ class StockBot:
                         if sup['virgin'] and sup['dist'] <= 0.2:
                             touch_key = f"{ticker}_{sup['type']}_{sup['price']}"
                             if touch_key not in self.notified_touches:
-                                # 1. Confirmação de Volume (Volume Spike > 1.5x média 20min)
+                                # 1. Confirmação de Reversão 30m (Mínima e Máxima Superior)
+                                is_reversal = await loop.run_in_executor(None, self.scanner.check_reversal_30m, ticker)
+                                if not is_reversal:
+                                    logger.info(f"{ticker} tocou suporte mas aguarda confirmação de vela 30m.")
+                                    continue
+
+                                # 2. Confirmação de Volume (Volume Spike > 1.5x média 20min)
                                 vol_spike = False
                                 try:
                                     avg_vol = current_data['Volume'].iloc[-21:-1].mean()
@@ -344,8 +350,9 @@ class StockBot:
                                 type_esc = html.escape(sup['type'])
                                 price_val = sup['price']
                                 
-                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Tocado! (&lt; 0.2%)</b>\n"
+                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Confirmado (30m)!</b>\n"
                                          f"🔥 <b>{ticker_esc}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{type_esc} (${price_val})</b>\n"
+                                         f"✅ <b>Confirmação 30m:</b> High/Low Superior\n"
                                          f"{vol_msg}\n"
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
