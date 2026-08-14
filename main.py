@@ -501,7 +501,15 @@ class StockBot:
                 self.last_support_check_time = now
 
     async def post_init(self, application):
-        await self.send_direct_msg("🟢 *Bot Pro Iniciado!* (Universo Dinâmico Ativo)\n_A preparar o primeiro scan..._")
+        startup_msg = (
+            "🚀 <b>BOT PRO: READY FOR ACTION</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🎯 <b>Foco:</b> Reversões em Suporte & Breakouts 2H\n"
+            "⚡ <b>Gatilho:</b> Confirmação 15m + Volume Spike\n"
+            "📈 <b>Interface:</b> TradingView Integrado\n\n"
+            "🔍 <i>A iniciar scan de alta precisão...</i>"
+        )
+        await self.send_direct_msg(startup_msg)
         # Iniciar o primeiro scan com is_manual=True para mostrar o progresso ao utilizador
         asyncio.create_task(self.run_scan(is_manual=True))
         # Iniciar loops de agendamento
