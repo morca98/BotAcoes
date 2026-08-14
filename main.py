@@ -117,8 +117,8 @@ class StockBot:
                 full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
                 full_universe = list(set(full_universe) | self.user_watchlist)
                 
-                # 3. Filtrar por Top Liquidez (500 ativos)
-                filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 500)
+                # 3. Filtrar por Top Liquidez (1000 ativos)
+                filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 1000)
                 
                 # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
                 current_signals = {}
