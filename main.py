@@ -6,7 +6,7 @@ import json
 import html
 from datetime import datetime
 import pytz
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from config import Config
@@ -82,6 +82,26 @@ class StockBot:
             try:
                 await self.app.bot.send_message(chat_id=self.chat_id, text=text[:4000])
             except: pass
+
+    async def send_alert_with_buttons(self, text: str, ticker: str):
+        """Envia alerta com botão de acesso direto ao TradingView."""
+        try:
+            # Limpar sufixos do yfinance para TradingView (ex: SAP.DE -> ETR:SAP ou simplesmente manter ticker)
+            tv_symbol = ticker.replace('-', '').replace('.L', '').replace('.DE', '').replace('.PA', '').replace('.AS', '')
+            tv_url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}"
+            
+            keyboard = [[InlineKeyboardButton("📈 Ver no TradingView", url=tv_url)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await self.app.bot.send_message(
+                chat_id=self.chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Error sending alert with buttons: {e}")
+            await self.send_direct_msg(text)
 
     async def run_scan(self, is_manual=False):
         if self.scan_lock.locked():
@@ -350,11 +370,25 @@ class StockBot:
                                 vol_msg = "✅ <b>Defesa Institucional (Volume Spike!)</b>" if vol_spike else "⚠️ Sem pico de volume"
                                 
                                 conf_list = []
-                                if sup.get('conf_ema200'): conf_list.append("EMA 200 🎯")
-                                if sup.get('conf_ema70'): conf_list.append("EMA 70 🛡️")
-                                if sup.get('conf_fib'): conf_list.append("Golden Pocket 📐")
-                                if sup.get('conf_avwap'): conf_list.append("Institucional 🏛️")
-                                conf_msg = f"🌟 <b>Confluência Detetada: {' + '.join(conf_list)}</b>" if conf_list else ""
+                                conf_count = 0
+                                if sup.get('conf_ema200'): 
+                                    conf_list.append("EMA 200 🎯")
+                                    conf_count += 1
+                                if sup.get('conf_ema70'): 
+                                    conf_list.append("EMA 70 🛡️")
+                                    conf_count += 1
+                                if sup.get('conf_fib'): 
+                                    conf_list.append("Golden Pocket 📐")
+                                    conf_count += 1
+                                if sup.get('conf_avwap'): 
+                                    conf_list.append("Institucional 🏛️")
+                                    conf_count += 1
+                                
+                                # Barra de Força (Escala de 1 a 5 com base nas confluências)
+                                strength_score = min(5, max(1, conf_count + (1 if vol_spike else 0) + (1 if s.get('div_bullish') else 0)))
+                                strength_bar = "🟢" * strength_score + "⚪" * (5 - strength_score)
+                                
+                                conf_msg = f"🌟 <b>Confluência: {' + '.join(conf_list)}</b>" if conf_list else ""
                                 
                                 current_price_fmt = round(current_price, 2)
                                 ticker_esc = html.escape(ticker)
@@ -363,12 +397,13 @@ class StockBot:
                                 
                                 alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Confirmado (30m)!</b>\n"
                                          f"🔥 <b>{ticker_esc}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{type_esc} (${price_val})</b>\n"
+                                         f"📊 <b>Barra de Força:</b> {strength_bar} ({strength_score}/5)\n"
                                          f"✅ <b>Confirmação 30m:</b> High/Low Superior\n"
                                          f"{vol_msg}\n"
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
                                 
-                                await self.send_direct_msg(alert)
+                                await self.send_alert_with_buttons(alert, ticker)
                                 self.notified_touches.add(touch_key)
                 self.last_support_check_time = datetime.now(LISBON_TZ) # Heartbeat
             except Exception as e:
