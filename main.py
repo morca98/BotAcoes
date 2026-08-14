@@ -445,14 +445,27 @@ class StockBot:
                     is_breakout = await loop.run_in_executor(None, self.scanner._check_breakout_2h, h1_data)
                     
                     if is_breakout:
+                        # Obter dados diários para os detalhes ricos
+                        daily_data = tk.history(period="1y", interval="1d")
+                        details = await loop.run_in_executor(None, self.scanner.get_breakout_details, h1_data, daily_data)
+                        
+                        current_price = float(h1_data['Close'].iloc[-1])
                         ticker_esc = html.escape(ticker)
+                        
+                        vol_status = "✅ <b>Forte (Volume > Média)</b>" if details['vol_ratio'] > 1.2 else "⚠️ Moderado"
+                        vcp_status = "✅ <b>Detetado (Contração Estreita)</b>" if details['is_vcp'] else "❌ Não"
+                        
                         alert = (f"🚀 <b>ALERTA DE ROMPIMENTO 2H!</b>\n"
                                  f"🔥 <b>{ticker_esc}</b> rompeu a resistência recente!\n"
-                                 f"   Preço: <code>${round(h1_data['Close'].iloc[-1], 2)}</code>\n"
-                                 f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>\n"
-                                 f"🔗 Analisa o gráfico antes de entrar!")
+                                 f"   Preço: <code>${round(current_price, 2)}</code>\n\n"
+                                 f"📊 <b>Métricas de Explosão:</b>\n"
+                                 f"   └ <b>Volume:</b> {vol_status} (<code>{details['vol_ratio']}x</code>)\n"
+                                 f"   └ <b>Padrão VCP:</b> {vcp_status}\n"
+                                 f"   └ <b>Distância do Breakout:</b> <code>+{details['dist_pct']}%</code>\n\n"
+                                 f"🎯 <b>Próximo Alvo:</b> <code>${details['target']}</code> (Resistência)\n"
+                                 f"🏢 <b>Setor:</b> RS <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
                         
-                        await self.send_direct_msg(alert)
+                        await self.send_alert_with_buttons(alert, ticker)
                         self.notified_breakouts.add(ticker)
                         await asyncio.sleep(0.5)
             except Exception as e:

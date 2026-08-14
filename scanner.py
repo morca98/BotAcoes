@@ -211,6 +211,48 @@ class Scanner:
             return True
         return False
 
+    def get_breakout_details(self, h1_df, daily_df):
+        """Retorna detalhes ricos para o alerta de rompimento (Volume ratio, VCP, Distância, Alvo)."""
+        try:
+            if len(h1_df) < 20 or len(daily_df) < 20:
+                return {"vol_ratio": 1.0, "is_vcp": False, "dist_pct": 0.0, "target": 0.0}
+            
+            h2_df = h1_df.resample('2h').agg({
+                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+            }).dropna()
+            
+            if len(h2_df) < 10:
+                return {"vol_ratio": 1.0, "is_vcp": False, "dist_pct": 0.0, "target": 0.0}
+            
+            current_close = h2_df['Close'].iloc[-1]
+            prev_high = h2_df['High'].iloc[-11:-1].max()
+            
+            # 1. Distância do breakout
+            dist_pct = ((current_close - prev_high) / prev_high) * 100
+            
+            # 2. Volume ratio (Volume da última vela 2h vs média das últimas 10 velas 2h)
+            last_vol = h2_df['Volume'].iloc[-1]
+            avg_vol = h2_df['Volume'].iloc[-11:-1].mean()
+            vol_ratio = last_vol / avg_vol if avg_vol > 0 else 1.0
+            
+            # 3. VCP Check
+            is_vcp = self._check_vcp(daily_df)
+            
+            # 4. Próximo alvo (Máxima de 5 dias ou resistência estimada)
+            target = float(daily_df['High'].iloc[-5:].max())
+            if target <= current_close:
+                target = current_close * 1.05 # 5% acima se já renovou máximas
+                
+            return {
+                "vol_ratio": round(vol_ratio, 2),
+                "is_vcp": is_vcp,
+                "dist_pct": round(dist_pct, 2),
+                "target": round(target, 2)
+            }
+        except Exception as e:
+            logger.error(f"Erro ao obter detalhes de rompimento: {e}")
+            return {"vol_ratio": 1.0, "is_vcp": False, "dist_pct": 0.0, "target": 0.0}
+
     def _check_pullback_leadership(self, asset_h1, benchmark_h1):
         """Verifica se o ativo demonstrou resiliência/liderança durante a última perna de queda (pullback)."""
         try:
