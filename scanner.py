@@ -211,6 +211,32 @@ class Scanner:
             return True
         return False
 
+    def _check_pullback_leadership(self, asset_h1, benchmark_h1):
+        """Verifica se o ativo demonstrou resiliência/liderança durante a última perna de queda (pullback)."""
+        try:
+            if asset_h1 is None or benchmark_h1 is None or len(asset_h1) < 15 or len(benchmark_h1) < 15:
+                return False
+            
+            # Olhar para as últimas 15 velas de 1h (perna recente)
+            recent_asset = asset_h1.iloc[-15:]
+            recent_bench = benchmark_h1.iloc[-15:]
+            
+            asset_high = recent_asset['High'].max()
+            asset_current = recent_asset['Close'].iloc[-1]
+            asset_drawdown = (asset_current - asset_high) / asset_high
+            
+            bench_high = recent_bench['High'].max()
+            bench_current = recent_bench['Close'].iloc[-1]
+            bench_drawdown = (bench_current - bench_high) / bench_high
+            
+            # Se o benchmark caiu mais do que o ativo (ex: bench caiu 2% e ativo caiu 0.5%), há liderança/resiliência
+            # Nota: drawdowns são negativos (ex: -0.02 vs -0.005)
+            if asset_drawdown > bench_drawdown and bench_drawdown < -0.005:
+                return True
+        except Exception as e:
+            logger.error(f"Erro ao calcular pullback leadership: {e}")
+        return False
+
     def check_reversal_30m(self, ticker):
         """Verifica se a última vela de 30min tem Mínima e Máxima superiores à anterior."""
         try:

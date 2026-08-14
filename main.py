@@ -384,9 +384,21 @@ class StockBot:
                                     conf_list.append("Institucional 🏛️")
                                     conf_count += 1
                                 
-                                # Barra de Força (Escala de 1 a 5 com base nas confluências)
-                                strength_score = min(5, max(1, conf_count + (1 if vol_spike else 0) + (1 if s.get('div_bullish') else 0)))
-                                strength_bar = "🟢" * strength_score + "⚪" * (5 - strength_score)
+                                # 3. Verificar Liderança no Pullback (RS Momentum)
+                                pullback_leadership = False
+                                try:
+                                    asset_h1 = tk.history(period="5d", interval="60m")
+                                    bench_symbol = "EXSA.DE" if any(ticker.endswith(x) for x in [".DE", ".PA", ".L", ".LS", ".MC", ".MI", ".AS", ".SW", ".ST", ".CO", ".OL", ".HE", ".VI", ".BR", ".IR", ".WA", ".LU", ".AT", ".TA"]) else "SPY"
+                                    bench_h1 = yf.Ticker(bench_symbol).history(period="5d", interval="60m")
+                                    pullback_leadership = await loop.run_in_executor(None, self.scanner._check_pullback_leadership, asset_h1, bench_h1)
+                                except: pass
+
+                                rs_msg = "⚡ <b>Liderança no Pullback (Resiliência Forte)</b>" if pullback_leadership else ""
+
+                                # Barra de Força (Escala de 1 a 6 com base nas confluências, volume, divergência e momentum)
+                                total_points = conf_count + (1 if vol_spike else 0) + (1 if s.get('div_bullish') else 0) + (1 if pullback_leadership else 0)
+                                strength_score = min(6, max(1, total_points))
+                                strength_bar = "🟢" * strength_score + "⚪" * (6 - strength_score)
                                 
                                 conf_msg = f"🌟 <b>Confluência: {' + '.join(conf_list)}</b>" if conf_list else ""
                                 
@@ -397,9 +409,10 @@ class StockBot:
                                 
                                 alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Confirmado (30m)!</b>\n"
                                          f"🔥 <b>{ticker_esc}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{type_esc} (${price_val})</b>\n"
-                                         f"📊 <b>Barra de Força:</b> {strength_bar} ({strength_score}/5)\n"
+                                         f"📊 <b>Barra de Força:</b> {strength_bar} ({strength_score}/6)\n"
                                          f"✅ <b>Confirmação 30m:</b> High/Low Superior\n"
                                          f"{vol_msg}\n"
+                                         f"{rs_msg}\n"
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
                                 
