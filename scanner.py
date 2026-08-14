@@ -447,16 +447,6 @@ class Scanner:
             # Calcular suportes virgens usando os dados já carregados
             supports = self.get_key_supports(ticker, current_price, daily)
             
-            # Adicionar AVWAP como suporte se estiver próximo
-            if avwap_low and avwap_low < current_price:
-                dist_avwap = ((current_price - avwap_low) / avwap_low) * 100
-                if dist_avwap <= 5.0:
-                    supports.append({
-                        "type": "AVWAP Fundo", "price": round(avwap_low, 2), 
-                        "dist": round(dist_avwap, 2), "virgin": True, 
-                        "conf_ema": False, "conf_fib": False
-                    })
-
             # 5. Sistema de Estrelas (Scoring)
             score = 1 # Base por passar nos filtros
             if relative_strength > 1.2: score += 1
@@ -465,7 +455,11 @@ class Scanner:
             if breakout_2h: score += 1
             
             # Confluência de suportes aumenta estrelas
-            has_confluence = any(s['conf_ema'] or s['conf_fib'] or "AVWAP" in s['type'] for s in supports if s['dist'] < 2.0)
+            has_confluence = any(
+                s.get('conf_ema200') or s.get('conf_ema70') or 
+                s.get('conf_fib') or s.get('conf_avwap') 
+                for s in supports if s['dist'] < 2.0
+            )
             if has_confluence: score += 1
             
             stars = min(5, score)
