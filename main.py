@@ -42,6 +42,7 @@ class StockBot:
         self.last_scan_time = datetime.now(LISBON_TZ)
         self.last_support_check_time = datetime.now(LISBON_TZ)
         self.scan_lock = asyncio.Lock() # Evitar scans simultâneos
+        self.signal_history = [] # Guardar os últimos 5 sinais
         
         self.app = ApplicationBuilder().token(self.token).build()
 
@@ -318,7 +319,67 @@ class StockBot:
         await update.message.reply_text(msg)
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text("🚀 *Bot Pro Ativo!*\nScan 2h: S&P 500 + Nasdaq + ETFs + Watchlist.\n\nComandos:\n/add - Adicionar ativo\n/remove - Remover ativo\n/watchlist - Ver lista\n/scan - Scan manual")
+        help_text = (
+            "🚀 <b>BOT PRO ATIVO!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 <b>Comandos Disponíveis:</b>\n"
+            "🔹 /lista - Ver todos os ativos monitorizados\n"
+            "🔹 /sinais - Ver os últimos 5 sinais disparados\n"
+            "🔹 /scan - Iniciar scan manual completo\n"
+            "🔹 /watchlist - Ver a tua lista pessoal\n"
+            "🔹 /add <code>TICKER</code> - Adicionar à watchlist\n"
+            "🔹 /remove <code>TICKER</code> - Remover da watchlist\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Scan automático a cada 2h | Monitorização 15m</i>"
+        )
+        await update.message.reply_text(help_text, parse_mode="HTML")
+
+    async def cmd_lista(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Mostra o total de ativos e os nomes organizados por mercado."""
+        if not self.active_signals:
+            await update.message.reply_text("A lista está vazia. Aguarda pela conclusão do primeiro scan.")
+            return
+        
+        tickers = sorted(self.active_signals.keys())
+        eu_tickers = [t for t in tickers if any(t.endswith(x) for x in [".DE", ".PA", ".L", ".LS", ".MC", ".MI", ".AS", ".SW", ".ST", ".CO", ".OL", ".HE", ".VI", ".BR", ".IR", ".WA", ".LU", ".AT", ".TA"])]
+        us_tickers = [t for t in tickers if t not in eu_tickers]
+        
+        msg = (
+            f"📋 <b>ATIVOS MONITORIZADOS ({len(tickers)})</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🇺🇸 <b>EUA ({len(us_tickers)}):</b>\n"
+            f"<code>{', '.join(us_tickers[:100])}</code>"
+        )
+        if len(us_tickers) > 100: msg += "..."
+        
+        if eu_tickers:
+            msg += (
+                f"\n\n🇪🇺 <b>EUROPA ({len(eu_tickers)}):</b>\n"
+                f"<code>{', '.join(eu_tickers[:100])}</code>"
+            )
+            if len(eu_tickers) > 100: msg += "..."
+            
+        msg += f"\n━━━━━━━━━━━━━━━━━━━━\n{self.market_regime}"
+        
+        await self.send_direct_msg(msg)
+
+    async def cmd_sinais(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Mostra os últimos 5 sinais disparados."""
+        if not self.signal_history:
+            await update.message.reply_text("Ainda não foram disparados sinais hoje.")
+            return
+        
+        msg = "🎯 <b>ÚLTIMOS 5 SINAIS DISPARADOS</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        for s in reversed(self.signal_history):
+            time_str = s['time'].strftime("%H:%M")
+            msg += (
+                f"🕒 <code>{time_str}</code> | <b>{s['ticker']}</b>\n"
+                f"🔹 {s['type']} | {s['score_bar']}\n"
+                f"💰 Preço: <code>${s['price']}</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+            )
+        
+        await update.message.reply_text(msg, parse_mode="HTML")
 
     async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔍 *A iniciar scan completo...*")
@@ -419,6 +480,13 @@ class StockBot:
                                 if strength_score > 1:
                                     await self.send_alert_with_buttons(alert, ticker)
                                     logger.info(f"Alerta enviado para {ticker} com força {strength_score}/6")
+                                    # Adicionar ao histórico
+                                    self.signal_history.append({
+                                        'ticker': ticker, 'type': 'Suporte', 
+                                        'score_bar': strength_bar, 'price': current_price_fmt,
+                                        'time': datetime.now(LISBON_TZ)
+                                    })
+                                    if len(self.signal_history) > 5: self.signal_history.pop(0)
                                 else:
                                     logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
                                     
@@ -505,6 +573,13 @@ class StockBot:
                         if b_score > 1:
                             await self.send_alert_with_buttons(alert, ticker)
                             logger.info(f"Breakout enviado para {ticker} com força {b_score}/4")
+                            # Adicionar ao histórico
+                            self.signal_history.append({
+                                'ticker': ticker, 'type': 'Rompimento', 
+                                'score_bar': strength_bar, 'price': round(current_price, 2),
+                                'time': datetime.now(LISBON_TZ)
+                            })
+                            if len(self.signal_history) > 5: self.signal_history.pop(0)
                         else:
                             logger.info(f"Breakout ignorado para {ticker}: Força 1/4")
                         self.notified_breakouts.add(ticker)
@@ -565,6 +640,8 @@ class StockBot:
         self.app.add_handler(CommandHandler("add", self.cmd_add))
         self.app.add_handler(CommandHandler("remove", self.cmd_remove))
         self.app.add_handler(CommandHandler("watchlist", self.cmd_watchlist))
+        self.app.add_handler(CommandHandler("lista", self.cmd_lista))
+        self.app.add_handler(CommandHandler("sinais", self.cmd_sinais))
         self.app.post_init = self.post_init
         
         # Usar a forma recomendada para v20+ em ambientes com loops ativos
