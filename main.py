@@ -416,7 +416,12 @@ class StockBot:
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
                                 
-                                await self.send_alert_with_buttons(alert, ticker)
+                                if strength_score > 1:
+                                    await self.send_alert_with_buttons(alert, ticker)
+                                    logger.info(f"Alerta enviado para {ticker} com força {strength_score}/6")
+                                else:
+                                    logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
+                                    
                                 self.notified_touches.add(touch_key)
                 self.last_support_check_time = datetime.now(LISBON_TZ) # Heartbeat
             except Exception as e:
