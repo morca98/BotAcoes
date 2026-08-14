@@ -32,7 +32,7 @@ class Scanner:
         "Communication Services": "XLC"
     }
 
-    THEMATIC_ETFS = ["SMH", "XBI", "IBIT", "IWM", "QQQ", "SPY"]
+    THEMATIC_ETFS = ["SMH", "XBI", "IBIT", "IWM", "QQQ", "SPY", "EXSA.DE"]
 
     def __init__(self, config):
         self.config = config
@@ -75,11 +75,23 @@ class Scanner:
 
         final_list = list(set([t for t in tickers if isinstance(t, str) and t != 'nan']))
         
+        # 3. Adicionar STOXX 600 (Europa)
+        try:
+            if os.path.exists("stoxx600_tickers.json"):
+                with open("stoxx600_tickers.json", "r") as f:
+                    stoxx_list = json.load(f)
+                    final_list.extend(stoxx_list)
+                    logger.info(f"Adicionados {len(stoxx_list)} ativos do STOXX 600.")
+        except Exception as e:
+            logger.error(f"Erro ao carregar STOXX 600: {e}")
+
+        final_list = list(set(final_list))
+        
         # De-duplicação: Manter apenas GOOGL (Alphabet)
         if "GOOGL" in final_list and "GOOG" in final_list:
             final_list.remove("GOOG")
             
-        logger.info(f"Universo dinâmico: {len(final_list)} ativos. Setores mapeados: {len(self._ticker_sectors)}")
+        logger.info(f"Universo dinâmico final: {len(final_list)} ativos. Setores mapeados: {len(self._ticker_sectors)}")
         return final_list
 
     def filter_by_liquidity(self, tickers, limit=500):
@@ -354,11 +366,19 @@ class Scanner:
             try:
                 f_info = tk.fast_info
                 market_cap = f_info.get("market_cap", 0)
-                if market_cap and market_cap < self.config.MIN_MARKET_CAP: return None
+                currency = f_info.get("currency", "USD")
+                
+                # Filtro de Market Cap: 500M EUR ou 2B USD (conforme config)
+                min_mc = self.config.MIN_MARKET_CAP
+                if currency == "EUR":
+                    min_mc = 500_000_000 # Filtro específico para Europa
+                
+                if market_cap and market_cap < min_mc: return None
                 current_price = f_info.get("last_price")
             except:
                 market_cap = 0
                 current_price = None
+                currency = "USD"
 
             # 2. Obter histórico (essencial para indicadores)
             daily = tk.history(period="2y", interval="1d")
@@ -380,13 +400,16 @@ class Scanner:
                 pass
 
             relative_strength = 0
-            etf_ticker = self.SECTOR_ETFS.get(sector, "SPY") if sector else "SPY"
+            # Fallback inteligente: SPY para EUA, EXSA.DE para Europa
+            default_etf = "EXSA.DE" if currency == "EUR" or any(ticker.endswith(s) for s in [".DE", ".PA", ".L", ".LS", ".MC", ".MI", ".AS", ".SW", ".ST", ".CO", ".OL", ".HE", ".VI", ".BR", ".IR", ".WA", ".LU", ".AT", ".TA"]) else "SPY"
             
-            # Tentar obter dados do setor ou fallback para SPY
+            etf_ticker = self.SECTOR_ETFS.get(sector, default_etf) if sector else default_etf
+            
+            # Tentar obter dados do setor ou fallback
             sector_daily = self._get_sector_etf_data(etf_ticker)
             if sector_daily is None:
-                sector_daily = self._get_sector_etf_data("SPY")
-                etf_ticker = "SPY"
+                sector_daily = self._get_sector_etf_data(default_etf)
+                etf_ticker = default_etf
 
             if sector_daily is not None and len(sector_daily) >= 252:
                 combined = pd.DataFrame({'ticker': daily['Close'], 'sector': sector_daily['Close']}).dropna()
