@@ -451,16 +451,16 @@ class Scanner:
                 y_high = year_data['High'].max()
                 y_low = year_data['Low'].min()
                 annual_vol = (y_high - y_low) / y_low
-                if annual_vol < 0.5: 
-                    logger.debug(f"Rejeitado {ticker}: Volatilidade {annual_vol:.2%} < 50%")
+                if annual_vol < self.config.MIN_ANNUAL_VOL: 
+                    logger.debug(f"Rejeitado {ticker}: Volatilidade {annual_vol:.2%} < {self.config.MIN_ANNUAL_VOL:.0%}")
                     return None
             
             # 2. RSI Diário < 50
             rsi_daily_series = self._rsi(daily["Close"], 14)
             if rsi_daily_series.empty: return None
             rsi_daily = float(rsi_daily_series.iloc[-1])
-            if rsi_daily >= 50:
-                logger.debug(f"Rejeitado {ticker}: RSI Diário {rsi_daily:.2f} >= 50")
+            if rsi_daily >= self.config.MAX_RSI_DAILY:
+                logger.debug(f"Rejeitado {ticker}: RSI Diário {rsi_daily:.2f} >= {self.config.MAX_RSI_DAILY}")
                 return None
             
             # 3. Obter Setor (Prioridade: Wikipedia Cache -> yfinance fast_info se disponível -> Skip)
@@ -506,8 +506,8 @@ class Scanner:
                 rsi_h1 = float(rsi_h1_series.iloc[-1])
                 
                 # Filtro RSI 4h < 50
-                if rsi_h1 >= 50:
-                    logger.debug(f"Rejeitado {ticker}: RSI 4h {rsi_h1:.2f} >= 50")
+                if rsi_h1 >= self.config.MAX_RSI_4H:
+                    logger.debug(f"Rejeitado {ticker}: RSI 4h {rsi_h1:.2f} >= {self.config.MAX_RSI_4H}")
                     return None
                 
                 # MACD H1 para divergência

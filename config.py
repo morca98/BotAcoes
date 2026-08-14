@@ -17,6 +17,7 @@ class Config:
     MAX_RSI_4H = 50.0                  # Eliminar se RSI 4H > 50
     MAX_EMA20_DIST_PCT = 8.0           # Eliminar se Preço > EMA20 + 8%
     MIN_ATR_PCT = 2.0                  # Eliminar se ATR% < 2%
+    MIN_ANNUAL_VOL = 0.5               # Eliminar se Volatilidade Anual < 50%
     
     # Lista de Ativos (S&P 500 / NASDAQ 100 principais)
     ASSETS = [
