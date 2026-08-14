@@ -465,32 +465,20 @@ class StockBot:
                             pullback_leadership = await loop.run_in_executor(None, self.scanner._check_pullback_leadership, h1_data, bench_h1)
                         except: pass
 
-                        # Score de 6 Pontos para Rompimento:
+                        # Score de 4 Pontos para Rompimento:
                         # 1. Base Breakout (1)
                         # 2. Volume Spike > 1.2x (+1)
                         # 3. VCP Pattern (+1)
                         # 4. Pullback Leadership (+1)
-                        # 5. RS/Setor Dominant > 1.2 (+1)
-                        # 6. Trend Alignment (Preço > EMA 200) (+1)
                         b_score = 1
                         vol_spike = details['vol_ratio'] > 1.2
                         is_vcp = details['is_vcp']
-                        rs_val = float(s.get('rs_sector', 1.0))
-                        rs_dominant = rs_val > 1.2
-                        
-                        trend_aligned = False
-                        try:
-                            ema200 = daily_data['Close'].ewm(span=200, adjust=False).mean().iloc[-1]
-                            trend_aligned = current_price > ema200
-                        except: pass
 
                         if vol_spike: b_score += 1
                         if is_vcp: b_score += 1
                         if pullback_leadership: b_score += 1
-                        if rs_dominant: b_score += 1
-                        if trend_aligned: b_score += 1
                         
-                        strength_bar = "🟢" * b_score + "⚪" * (6 - b_score)
+                        strength_bar = "🟢" * b_score + "⚪" * (4 - b_score)
                         
                         vol_status = "✅ <b>Forte (Volume > Média)</b>" if vol_spike else "⚠️ Moderado"
                         vcp_status = "✅ <b>Detetado (Contração Estreita)</b>" if is_vcp else "❌ Não"
@@ -499,14 +487,12 @@ class StockBot:
                         if vol_spike: conf_list_b.append("Volume Spike 📊")
                         if is_vcp: conf_list_b.append("VCP Spring ⚡")
                         if pullback_leadership: conf_list_b.append("Liderança 🏆")
-                        if rs_dominant: conf_list_b.append(f"RS Setor ({rs_val}) 🚀")
-                        if trend_aligned: conf_list_b.append("Tendência EMA200 📈")
                         
                         conf_msg_b = f"🌟 <b>Confluência: {' + '.join(conf_list_b)}</b>" if conf_list_b else ""
                         
                         alert = (f"🚀 <b>ALERTA DE ROMPIMENTO 2H!</b>\n"
                                  f"🔥 <b>{ticker_esc}</b> rompeu a resistência recente!\n"
-                                 f"📊 <b>Barra de Força:</b> {strength_bar} ({b_score}/6)\n"
+                                 f"📊 <b>Barra de Força:</b> {strength_bar} ({b_score}/4)\n"
                                  f"   Preço: <code>${round(current_price, 2)}</code>\n\n"
                                  f"📊 <b>Métricas de Explosão:</b>\n"
                                  f"   └ <b>Volume:</b> {vol_status} (<code>{details['vol_ratio']}x</code>)\n"
@@ -518,9 +504,9 @@ class StockBot:
                         
                         if b_score > 1:
                             await self.send_alert_with_buttons(alert, ticker)
-                            logger.info(f"Breakout enviado para {ticker} com força {b_score}/6")
+                            logger.info(f"Breakout enviado para {ticker} com força {b_score}/4")
                         else:
-                            logger.info(f"Breakout ignorado para {ticker}: Força 1/6")
+                            logger.info(f"Breakout ignorado para {ticker}: Força 1/4")
                         self.notified_breakouts.add(ticker)
                         await asyncio.sleep(0.5)
             except Exception as e:
