@@ -352,10 +352,10 @@ class StockBot:
                         if sup['virgin'] and sup['dist'] <= 0.2:
                             touch_key = f"{ticker}_{sup['type']}_{sup['price']}"
                             if touch_key not in self.notified_touches:
-                                # 1. Confirmação de Reversão 30m (Mínima e Máxima Superior)
-                                is_reversal = await loop.run_in_executor(None, self.scanner.check_reversal_30m, ticker)
+                                # 1. Confirmação de Reversão 15m (Mínima e Máxima Superior)
+                                is_reversal = await loop.run_in_executor(None, self.scanner.check_reversal_15m, ticker)
                                 if not is_reversal:
-                                    logger.info(f"{ticker} tocou suporte mas aguarda confirmação de vela 30m.")
+                                    logger.info(f"{ticker} tocou suporte mas aguarda confirmação de vela 15m.")
                                     continue
 
                                 # 2. Confirmação de Volume (Volume Spike > 1.5x média 20min)
@@ -407,10 +407,10 @@ class StockBot:
                                 type_esc = html.escape(sup['type'])
                                 price_val = sup['price']
                                 
-                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Confirmado (30m)!</b>\n"
+                                alert = (f"🎯 <b>ZONA DE COMPRA - Suporte Confirmado (15m)!</b>\n"
                                          f"🔥 <b>{ticker_esc}</b> @ <code>${current_price_fmt}</code> encostou em: <b>{type_esc} (${price_val})</b>\n"
                                          f"📊 <b>Barra de Força:</b> {strength_bar} ({strength_score}/6)\n"
-                                         f"✅ <b>Confirmação 30m:</b> High/Low Superior\n"
+                                         f"✅ <b>Confirmação 15m:</b> High/Low Superior\n"
                                          f"{vol_msg}\n"
                                          f"{rs_msg}\n"
                                          f"{conf_msg}\n"

@@ -237,12 +237,12 @@ class Scanner:
             logger.error(f"Erro ao calcular pullback leadership: {e}")
         return False
 
-    def check_reversal_30m(self, ticker):
-        """Verifica se a última vela de 30min tem Mínima e Máxima superiores à anterior."""
+    def check_reversal_15m(self, ticker):
+        """Verifica se a última vela de 15min tem Mínima e Máxima superiores à anterior."""
         try:
             tk = yf.Ticker(ticker)
-            # Obter dados de 30 minutos (últimos 2 dias para garantir dados suficientes)
-            df = tk.history(period="2d", interval="30m")
+            # Obter dados de 15 minutos (último dia para garantir dados suficientes)
+            df = tk.history(period="1d", interval="15m")
             if len(df) < 2: return False
             
             last_candle = df.iloc[-1]
@@ -253,7 +253,7 @@ class Scanner:
                 return True
             return False
         except Exception as e:
-            logger.error(f"Erro ao verificar reversão 30m para {ticker}: {e}")
+            logger.error(f"Erro ao verificar reversão 15m para {ticker}: {e}")
             return False
 
     def _calculate_avwap(self, df, anchor_type="low"):
