@@ -225,30 +225,39 @@ class StockBot:
                 await self.send_direct_msg("Nenhuma ação cumpre os critérios no momento.")
             else:
                 sorted_signals = sorted(current_signals.values(), key=get_rank_score, reverse=True)
+                summary_lines = [f"📋 <b>Ativos Detetados ({len(sorted_signals)}):</b>\n"]
                 for s in sorted_signals:
-                    await self.send_direct_msg(self._format_signal(s))
-                    await asyncio.sleep(0.3) # Delay para evitar rate limit
+                    stars = "⭐" * s.get('stars', 1)
+                    summary_lines.append(f"🔹 <b>{s['ticker']}</b> {stars} @ <code>${s['price']}</code> | RS: {s['rs_sector']} | RSI D: {s['rsi_daily']}")
+                summary_lines.append("\n💡 <i>Usa /analisar [TICKER] para ver a ficha técnica completa e suportes (ex: /analisar GE)</i>")
+                
+                full_summary = "\n".join(summary_lines)
+                if len(full_summary) > 4000:
+                    for i in range(0, len(full_summary), 4000):
+                        await self.send_direct_msg(full_summary[i:i+4000])
+                else:
+                    await self.send_direct_msg(full_summary)
         else:
             if new_tickers or new_breakouts:
                 header = f"🔔 <b>Atualização Importante</b> — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
                 await self.send_direct_msg(header)
                 
                 if new_tickers:
-                    await self.send_direct_msg("🌟 <b>Novos Ativos na Lista:</b>")
+                    summary_new = ["🌟 <b>Novos Ativos na Lista:</b>"]
                     sorted_new = sorted([current_signals[t] for t in new_tickers], key=get_rank_score, reverse=True)
                     for s in sorted_new:
-                        await self.send_direct_msg(self._format_signal(s))
-                        await asyncio.sleep(0.3)
+                        stars = "⭐" * s.get('stars', 1)
+                        summary_new.append(f"🔹 <b>{s['ticker']}</b> {stars} @ <code>${s['price']}</code>")
+                    summary_new.append("\n💡 <i>Usa /analisar [TICKER] para ver detalhes completos.</i>")
+                    await self.send_direct_msg("\n".join(summary_new))
 
                 if new_breakouts:
-                    await self.send_direct_msg("\n🚀 <b>Rompimentos 2h Detetados:</b>")
+                    summary_break = ["🚀 <b>Rompimentos 2h Detetados:</b>"]
                     sorted_breakouts = sorted([current_signals[t] for t in new_breakouts], key=get_rank_score, reverse=True)
                     for s in sorted_breakouts:
-                        if s['ticker'] in new_tickers:
-                            await self.send_direct_msg(f"🔹 <b>{s['ticker']}</b> também confirmou rompimento!")
-                        else:
-                            await self.send_direct_msg(self._format_signal(s))
-                        await asyncio.sleep(0.3)
+                        summary_break.append(f"🔹 <b>{s['ticker']}</b> @ <code>${s['price']}</code>")
+                    summary_break.append("\n💡 <i>Usa /analisar [TICKER] para ver detalhes completos.</i>")
+                    await self.send_direct_msg("\n".join(summary_break))
             else:
                 logger.info("Nenhuma atualização importante encontrada.")
         
@@ -329,6 +338,7 @@ class StockBot:
             "🤖 <b>Comandos Disponíveis:</b>\n"
             "🔹 /lista - Ver todos os ativos monitorizados\n"
             "🔹 /sinais - Ver os últimos 5 sinais disparados\n"
+            "🔹 /analisar <code>TICKER</code> - Ver ficha técnica completa (ex: /analisar GE)\n"
             "🔹 /scan - Iniciar scan manual completo\n"
             "🔹 /watchlist - Ver a tua lista pessoal\n"
             "🔹 /add <code>TICKER</code> - Adicionar à watchlist\n"
@@ -384,6 +394,32 @@ class StockBot:
             )
         
         await update.message.reply_text(msg, parse_mode="HTML")
+
+    async def cmd_analisar(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Analisa um ativo específico e retorna a ficha técnica completa."""
+        if not context.args:
+            await update.message.reply_text("Uso: /analisar TICKER (ex: /analisar GE)")
+            return
+        
+        ticker = context.args[0].upper()
+        signal = self.active_signals.get(ticker)
+        
+        if not signal:
+            await update.message.reply_text(f"⏳ A analisar <b>{ticker}</b> em detalhe...", parse_mode="HTML")
+            loop = asyncio.get_running_loop()
+            signal = await loop.run_in_executor(None, self.scanner.analyze, ticker)
+            if signal:
+                self.active_signals[ticker] = signal
+            else:
+                await update.message.reply_text(f"❌ O ativo <b>{ticker}</b> não cumpre os critérios técnicos no momento ou é inválido.", parse_mode="HTML")
+                return
+
+        msg = self._format_signal(signal)
+        tv_url = f"https://www.tradingview.com/chart/?symbol={ticker}"
+        keyboard = [[InlineKeyboardButton("📈 Ver no TradingView", url=tv_url)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
 
     async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔍 *A iniciar scan completo...*")
@@ -668,6 +704,7 @@ class StockBot:
         self.app.add_handler(CommandHandler("watchlist", self.cmd_watchlist))
         self.app.add_handler(CommandHandler("lista", self.cmd_lista))
         self.app.add_handler(CommandHandler("sinais", self.cmd_sinais))
+        self.app.add_handler(CommandHandler("analisar", self.cmd_analisar))
         self.app.post_init = self.post_init
         
         # Usar a forma recomendada para v20+ em ambientes com loops ativos
