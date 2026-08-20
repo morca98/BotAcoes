@@ -161,8 +161,9 @@ class Scanner:
             return None
         if etf_ticker not in self._sector_data_cache:
             try:
-                etf = yf.Ticker(etf_ticker)
-                data = etf.history(period="2y", interval="1d")
+                from data_provider import DataProvider
+                dp = DataProvider()
+                data = dp.fetch_daily(etf_ticker)
                 if data is not None and not data.empty:
                     self._sector_data_cache[etf_ticker] = data.dropna(subset=['Close'])
                 else:
