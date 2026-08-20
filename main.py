@@ -231,12 +231,20 @@ class StockBot:
                     summary_lines.append(f"🔹 <b>{s['ticker']}</b> {stars} @ <code>${s['price']}</code> | RS: {s['rs_sector']} | RSI D: {s['rsi_daily']}")
                 summary_lines.append("\n💡 <i>Usa /analisar [TICKER] para ver a ficha técnica completa e suportes (ex: /analisar GE)</i>")
                 
-                full_summary = "\n".join(summary_lines)
-                if len(full_summary) > 4000:
-                    for i in range(0, len(full_summary), 4000):
-                        await self.send_direct_msg(full_summary[i:i+4000])
-                else:
-                    await self.send_direct_msg(full_summary)
+                # Enviar em blocos por linha para evitar cortar tags HTML a meio
+                current_chunk = []
+                current_length = 0
+                for line in summary_lines:
+                    line_len = len(line) + 1
+                    if current_length + line_len > 3800:
+                        await self.send_direct_msg("\n".join(current_chunk))
+                        current_chunk = [line]
+                        current_length = line_len
+                    else:
+                        current_chunk.append(line)
+                        current_length += line_len
+                if current_chunk:
+                    await self.send_direct_msg("\n".join(current_chunk))
         else:
             if new_tickers or new_breakouts:
                 header = f"🔔 <b>Atualização Importante</b> — {now}\n━━━━━━━━━━━━━━━━━━━━\n"
