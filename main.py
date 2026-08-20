@@ -43,6 +43,7 @@ class StockBot:
         self.last_support_check_time = datetime.now(LISBON_TZ)
         self.scan_lock = asyncio.Lock() # Evitar scans simultâneos
         self.signal_history = [] # Guardar os últimos 5 sinais
+        self.recent_supports = {} # Ticker -> {'time': datetime, 'type': str, 'price': float}
         
         self.app = ApplicationBuilder().token(self.token).build()
 
@@ -481,12 +482,20 @@ class StockBot:
                                     await self.send_alert_with_buttons(alert, ticker)
                                     logger.info(f"Alerta enviado para {ticker} com força {strength_score}/6")
                                     # Adicionar ao histórico
+                                    now_time = datetime.now(LISBON_TZ)
                                     self.signal_history.append({
                                         'ticker': ticker, 'type': 'Suporte', 
                                         'score_bar': strength_bar, 'price': current_price_fmt,
-                                        'time': datetime.now(LISBON_TZ)
+                                        'time': now_time
                                     })
                                     if len(self.signal_history) > 5: self.signal_history.pop(0)
+                                    
+                                    # Registar para detecção de Combo (Sinais Combinados)
+                                    self.recent_supports[ticker] = {
+                                        'time': now_time,
+                                        'type': sup['type'],
+                                        'price': sup['price']
+                                    }
                                 else:
                                     logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
                                     
@@ -558,10 +567,22 @@ class StockBot:
                         
                         conf_msg_b = f"🌟 <b>Confluência: {' + '.join(conf_list_b)}</b>" if conf_list_b else ""
                         
-                        alert = (f"🚀 <b>ALERTA DE ROMPIMENTO 2H!</b>\n"
+                        # 2. Verificar se é um Sinal Combinado (Combo Suporte + Rompimento)
+                        combo_msg = ""
+                        header = "🚀 <b>ALERTA DE ROMPIMENTO 2H!</b>"
+                        if ticker in self.recent_supports:
+                            sup_info = self.recent_supports[ticker]
+                            time_diff = (datetime.now(LISBON_TZ) - sup_info['time']).total_seconds() / 3600
+                            if time_diff <= 48: # Janela de 48 horas
+                                header = "🎯 <b>CONFLUÊNCIA EXTREMA (Combo)</b>"
+                                combo_msg = (f"\n⚡ <b>Impulso de Reversão Detetado!</b>\n"
+                                             f"   └ Este ativo defendeu o suporte <b>{sup_info['type']}</b> (${sup_info['price']}) nas últimas {int(time_diff)}h.")
+
+                        alert = (f"{header}\n"
                                  f"🔥 <b>{ticker_esc}</b> rompeu a resistência recente!\n"
                                  f"📊 <b>Barra de Força:</b> {strength_bar} ({b_score}/4)\n"
-                                 f"   Preço: <code>${round(current_price, 2)}</code>\n\n"
+                                 f"   Preço: <code>${round(current_price, 2)}</code>\n"
+                                 f"{combo_msg}\n\n"
                                  f"📊 <b>Métricas de Explosão:</b>\n"
                                  f"   └ <b>Volume:</b> {vol_status} (<code>{details['vol_ratio']}x</code>)\n"
                                  f"   └ <b>Padrão VCP:</b> {vcp_status}\n"
@@ -573,9 +594,11 @@ class StockBot:
                         if b_score > 1:
                             await self.send_alert_with_buttons(alert, ticker)
                             logger.info(f"Breakout enviado para {ticker} com força {b_score}/4")
-                            # Adicionar ao histórico
+                            
+                            # Adicionar ao histórico (Tipo Combo ou Rompimento)
+                            sig_type = "🎯 Combo" if "CONFLUÊNCIA" in header else "🚀 Rompimento"
                             self.signal_history.append({
-                                'ticker': ticker, 'type': 'Rompimento', 
+                                'ticker': ticker, 'type': sig_type, 
                                 'score_bar': strength_bar, 'price': round(current_price, 2),
                                 'time': datetime.now(LISBON_TZ)
                             })
