@@ -163,15 +163,26 @@ class Scanner:
             try:
                 from data_provider import DataProvider
                 dp = DataProvider()
+                logger.info(f"A descarregar benchmark: {etf_ticker}")
                 data = dp.fetch_daily(etf_ticker)
                 if data is not None and not data.empty:
                     self._sector_data_cache[etf_ticker] = data.dropna(subset=['Close'])
                 else:
-                    return None
+                    # Guardar None para evitar tentativas repetidas se falhar
+                    self._sector_data_cache[etf_ticker] = None
             except Exception as e:
                 logger.error(f"Erro ao obter dados do ETF {etf_ticker}: {e}")
-                return None
+                self._sector_data_cache[etf_ticker] = None
         return self._sector_data_cache.get(etf_ticker)
+
+    def preload_benchmarks(self):
+        """Pré-carrega os principais benchmarks para evitar concorrência no início do scan."""
+        logger.info("A pré-carregar benchmarks (SPY, EXSA.DE e setores)...")
+        self._get_sector_etf_data("SPY")
+        self._get_sector_etf_data("EXSA.DE")
+        # Pre-carregar setores comuns
+        for etf in set(self.SECTOR_ETFS.values()):
+            self._get_sector_etf_data(etf)
 
     def _check_divergence(self, prices, indicator):
         """Deteção de divergência bullish profissional: Preço faz nova mínima, mas indicador não."""

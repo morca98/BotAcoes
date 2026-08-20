@@ -142,7 +142,10 @@ class StockBot:
                 # 3. Filtrar por Top Liquidez (1000 ativos)
                 filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 1000)
                 
-                # 3. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
+                # 4. Pré-carregar Benchmarks (Evitar concorrência de pedidos ao mesmo ETF)
+                await loop.run_in_executor(None, self.scanner.preload_benchmarks)
+                
+                # 5. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
                 current_signals = {}
                 total_to_analyze = len(filtered_universe)
                 logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")

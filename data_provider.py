@@ -61,7 +61,7 @@ class DataProvider:
 
         # 2. Fallback para yfinance (robusto e testado)
         try:
-            df = yf.download(ticker, period="1y", interval="1d", progress=False)
+            df = yf.download(ticker, period="2y", interval="1d", progress=False)
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.droplevel(1)
