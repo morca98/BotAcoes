@@ -552,7 +552,15 @@ class Scanner:
                 etf_ticker = default_etf
 
             if sector_daily is not None and len(sector_daily) >= 252:
-                combined = pd.DataFrame({'ticker': daily['Close'], 'sector': sector_daily['Close']}).dropna()
+                # Normalizar índices temporais antes de combinar Yahoo/Alpha Vantage.
+                # Alguns feeds devolvem DatetimeIndex com timezone e outros sem timezone.
+                ticker_close = daily['Close'].copy()
+                sector_close = sector_daily['Close'].copy()
+                if getattr(ticker_close.index, 'tz', None) is not None:
+                    ticker_close.index = ticker_close.index.tz_localize(None)
+                if getattr(sector_close.index, 'tz', None) is not None:
+                    sector_close.index = sector_close.index.tz_localize(None)
+                combined = pd.DataFrame({'ticker': ticker_close, 'sector': sector_close}).dropna()
                 if len(combined) >= 252:
                     ticker_perf = combined['ticker'].iloc[-1] / combined['ticker'].iloc[-252]
                     sector_perf = combined['sector'].iloc[-1] / combined['sector'].iloc[-252]
