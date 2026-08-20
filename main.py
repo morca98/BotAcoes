@@ -123,16 +123,38 @@ class StockBot:
             
             self.market_regime = "🟢 <b>MERCADO SAUDÁVEL (Risk-On)</b>"
             try:
-                # 1. Verificar Regime de Mercado (SPY)
+                # 1. Verificar Regime de Mercado (SPY) e Market Breadth (Saúde Interna)
                 import yfinance as yf
                 spy = yf.Ticker("SPY")
                 spy_data = spy.history(period="5d", interval="60m")
+                
+                # Calcular Market Breadth rápido (amostra de 30 blue chips do S&P 500)
+                breadth_sample = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH", "XOM", "LLY", "JNJ", "MA", "PG", "HD", "COST", "MRK", "ABBV", "PEP", "KO", "ADBE", "WMT", "BAC", "CRM", "MCD", "ACN", "NFLX", "AMD", "QCOM"]
+                above_ema50_count = 0
+                total_checked = 0
+                for sample_t in breadth_sample:
+                    try:
+                        df_sample = yf.Ticker(sample_t).history(period="3m", interval="1d")
+                        if not df_sample.empty and len(df_sample) >= 50:
+                            ema50 = df_sample['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+                            close_p = df_sample['Close'].iloc[-1]
+                            if close_p > ema50:
+                                above_ema50_count += 1
+                            total_checked += 1
+                    except:
+                        continue
+                
+                breadth_pct = (above_ema50_count / total_checked * 100) if total_checked > 0 else 50
+                breadth_str = f" | Breadth (EMA50): <b>{breadth_pct:.0f}%</b>"
+                
                 if not spy_data.empty:
                     spy_price = spy_data['Close'].iloc[-1]
                     spy_ema20 = spy_data['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
-                    if spy_price < spy_ema20:
-                        self.market_regime = "⚠️ <b>MERCADO EM QUEDA (Risk-Off)</b>"
-                        logger.warning("Mercado em queda (SPY < EMA20).")
+                    if spy_price < spy_ema20 or breadth_pct < 45:
+                        self.market_regime = f"⚠️ <b>MERCADO EM QUEDA / FRÁGIL (Risk-Off)</b>{breadth_str}"
+                        logger.warning(f"Mercado frágil. Breadth: {breadth_pct:.1f}%")
+                    else:
+                        self.market_regime = f"🟢 <b>MERCADO SAUDÁVEL (Risk-On)</b>{breadth_str}"
                 
                 # 2. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
                 loop = asyncio.get_running_loop()
@@ -253,6 +275,16 @@ class StockBot:
                 if new_tickers:
                     summary_new = ["🌟 <b>Novos Ativos na Lista:</b>"]
                     sorted_new = sorted([current_signals[t] for t in new_tickers], key=get_rank_score, reverse=True)
+                    
+                    # Análise de Correlação Setorial (Aviso de Exposição Elevada)
+                    sector_counts = {}
+                    for s in sorted_new:
+                        sec = s.get('sector_etf', 'UNKNOWN')
+                        sector_counts[sec] = sector_counts.get(sec, 0) + 1
+                    overexposed = [sec for sec, cnt in sector_counts.items() if cnt >= 3]
+                    if overexposed:
+                        summary_new.append(f"⚠️ <b>Alerta de Concentração:</b> Exposição elevada em <code>{', '.join(overexposed)}</code>.")
+
                     for s in sorted_new:
                         stars = "⭐" * s.get('stars', 1)
                         summary_new.append(f"🔹 <b>{s['ticker']}</b> {stars} @ <code>${s['price']}</code>")
@@ -304,7 +336,15 @@ class StockBot:
                     support_msg += f"   {icon}{html.escape(sup['type'])}: <b>${sup['price']}</b> (a {sup['dist']}%){conf_text}\n"
                 support_msg += "</tg-spoiler>"
 
-        return (f"🔹 <b>{ticker}</b> {stars} @ <code>${s['price']}</code> {break_status}{stretch_msg}\n"
+        earnings_days = s.get('earnings_days')
+        earnings_msg = ""
+        if earnings_days is not None:
+            if earnings_days <= 3:
+                earnings_msg = f"\n⚠️ <b>RISCO DE EARNINGS:</b> Resultados em {earnings_days} dias!"
+            else:
+                earnings_msg = f"\n📅 <b>Earnings:</b> a {earnings_days} dias"
+
+        return (f"🔹 <b>{ticker}</b> {stars} @ <code>${s['price']}</code> {break_status}{stretch_msg}{earnings_msg}\n"
                 f"   RS/Setor ({sector_etf}): <code>{s['rs_sector']}</code>\n"
                 f"   Divergência (4h): {div_status} | VCP: {vcp_status}\n"
                 f"{support_msg}"

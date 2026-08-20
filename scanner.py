@@ -661,6 +661,7 @@ class Scanner:
             if current_price < ema200: return None
             if atr_pct < self.config.MIN_ATR_PCT: return None
 
+            earnings_days = self._get_earnings_days(ticker)
             return {
                 "ticker": ticker,
                 "price": round(current_price, 2),
@@ -676,11 +677,40 @@ class Scanner:
                 "key_supports": supports,
                 "stars": stars,
                 "is_stretched": is_stretched,
-                "market_cap": round(market_cap / 1e9, 2) if market_cap else 0
+                "market_cap": round(market_cap / 1e9, 2) if market_cap else 0,
+                "earnings_days": earnings_days
             }
         except Exception as e:
             logger.error(f"Erro ao analisar {ticker}: {e}")
             return None
+
+    def _get_earnings_days(self, ticker: str):
+        """Calcula os dias restantes para os próximos resultados (Earnings)."""
+        try:
+            tk = yf.Ticker(ticker)
+            calendar = tk.calendar
+            if calendar is not None and not calendar.empty:
+                # O formato pode variar, mas geralmente tem uma coluna ou índice com datas
+                for col in calendar.columns:
+                    if 'Earnings Date' in str(col) or 'Date' in str(col):
+                        dates = pd.to_datetime(calendar[col])
+                        now = pd.Timestamp.now(tz=dates.dt.tz) if dates.dt.tz else pd.Timestamp.now()
+                        future_dates = [d for d in dates if d >= now]
+                        if future_dates:
+                            next_date = min(future_dates)
+                            days_left = (next_date - now).days
+                            return max(0, days_left)
+            # Tentar via info se calendar falhar
+            info = tk.info
+            earnings_ts = info.get('nextEarningsDate')
+            if earnings_ts:
+                import datetime
+                next_date = datetime.datetime.fromtimestamp(earnings_ts)
+                days_left = (next_date - datetime.datetime.now()).days
+                return max(0, days_left)
+        except Exception as e:
+            logger.debug(f"Não foi possível obter earnings para {ticker}: {e}")
+        return None
 
     @staticmethod
     def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
