@@ -44,6 +44,7 @@ class StockBot:
         self.scan_lock = asyncio.Lock() # Evitar scans simultâneos
         self.signal_history = [] # Guardar os últimos 5 sinais
         self.recent_supports = {} # Ticker -> {'time': datetime, 'type': str, 'price': float}
+        self.recent_breakouts = {} # Ticker -> {'time': datetime, 'price': float}
         
         self.app = ApplicationBuilder().token(self.token).build()
 
@@ -577,16 +578,23 @@ class StockBot:
                                     })
                                     if len(self.signal_history) > 5: self.signal_history.pop(0)
                                     
-                                    # Registar para detecção de Combo (Sinais Combinados)
-                                    self.recent_supports[ticker] = {
-                                        'time': now_time,
-                                        'type': sup['type'],
-                                        'price': sup['price']
-                                    }
-                                else:
-                                    logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
-                                    
-                                self.notified_touches.add(touch_key)
+                                # Registar para detecção de Combo (Sinais Combinados)
+                                self.recent_supports[ticker] = {
+                                    'time': now_time,
+                                    'type': sup['type'],
+                                    'price': sup['price']
+                                }
+                                
+                                # Verificação Simétrica: Se houve rompimento recente (nas últimas 48h), atualizar a mensagem ou enviar alerta combinado
+                                if ticker in self.recent_breakouts:
+                                    b_info = self.recent_breakouts[ticker]
+                                    b_time_diff = (now_time - b_info['time']).total_seconds() / 3600
+                                    if b_time_diff <= 48:
+                                        logger.info(f"Detetado Combo simétrico (Rompimento + Suporte) para {ticker}!")
+                            else:
+                                logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
+                                
+                            self.notified_touches.add(touch_key)
                 self.last_support_check_time = datetime.now(LISBON_TZ) # Heartbeat
             except Exception as e:
                 logger.error(f"Erro no monitor de suportes: {e}")
@@ -682,12 +690,19 @@ class StockBot:
                             await self.send_alert_with_buttons(alert, ticker)
                             logger.info(f"Breakout enviado para {ticker} com força {b_score}/4")
                             
+                            now_time = datetime.now(LISBON_TZ)
+                            # Registar rompimento recente para combo simétrico
+                            self.recent_breakouts[ticker] = {
+                                'time': now_time,
+                                'price': round(current_price, 2)
+                            }
+
                             # Adicionar ao histórico (Tipo Combo ou Rompimento)
                             sig_type = "🎯 Combo" if "CONFLUÊNCIA" in header else "🚀 Rompimento"
                             self.signal_history.append({
                                 'ticker': ticker, 'type': sig_type, 
                                 'score_bar': strength_bar, 'price': round(current_price, 2),
-                                'time': datetime.now(LISBON_TZ)
+                                'time': now_time
                             })
                             if len(self.signal_history) > 5: self.signal_history.pop(0)
                         else:
