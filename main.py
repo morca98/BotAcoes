@@ -6,6 +6,7 @@ import json
 import html
 from datetime import datetime
 import pytz
+import pandas_market_calendars as mcal
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -33,6 +34,11 @@ class StockBot:
         self.last_scan_tickers = set()
         self.active_breakouts = set()
         self.active_signals = {} # Tickers que passaram no último scan
+        # Evita alertas falsos de entrada/saída quando o fornecedor devolve dados instáveis.
+        self.pending_new_tickers = set()
+        self.announced_tickers = set()
+        self.pending_breakouts = set()
+        self.announced_breakouts = set()
         self.notified_touches = set() # Evitar spam de toques (Diário)
         self.notified_breakouts = set() # Evitar spam de rompimentos (Diário)
         self.last_reset_date = datetime.now(LISBON_TZ).date()
@@ -46,7 +52,50 @@ class StockBot:
         self.recent_supports = {} # Ticker -> {'time': datetime, 'type': str, 'price': float}
         self.recent_breakouts = {} # Ticker -> {'time': datetime, 'price': float}
         
+        self.market_calendar_cache = {}
+        self.initial_scan_completed = False
         self.app = ApplicationBuilder().token(self.token).build()
+
+    def _get_market_calendar_code(self, ticker: str) -> str:
+        """Devolve o calendário oficial da bolsa do ticker monitorizado."""
+        ticker = ticker.upper()
+        european_calendars = {
+            ".PA": "XPAR", ".DE": "XETR", ".L": "LSE", ".MI": "XMIL",
+            ".AS": "XAMS", ".BR": "XBRU", ".MC": "XMAD", ".LS": "XLIS",
+            ".SW": "XSWX", ".ST": "XSTO", ".CO": "XCSE", ".OL": "XOSL",
+            ".HE": "XHEL", ".VI": "XWBO", ".IR": "XDUB", ".WA": "XWAR",
+            ".LU": "XLUX", ".AT": "ASEX", ".TA": "TASE"
+        }
+        return next((calendar for suffix, calendar in european_calendars.items() if ticker.endswith(suffix)), "NYSE")
+
+    def _is_regular_market_open(self, ticker: str, now_utc=None) -> bool:
+        """Valida sessão regular; exclui pre-market, after-hours, fins de semana e feriados."""
+        try:
+            now_utc = now_utc or datetime.now(pytz.UTC)
+            if now_utc.tzinfo is None:
+                now_utc = pytz.UTC.localize(now_utc)
+            else:
+                now_utc = now_utc.astimezone(pytz.UTC)
+
+            calendar_code = self._get_market_calendar_code(ticker)
+            cache_key = (calendar_code, now_utc.date().isoformat())
+            if cache_key not in self.market_calendar_cache:
+                calendar = mcal.get_calendar(calendar_code)
+                schedule = calendar.schedule(start_date=now_utc.date(), end_date=now_utc.date())
+                if schedule.empty:
+                    self.market_calendar_cache[cache_key] = None
+                else:
+                    self.market_calendar_cache[cache_key] = (
+                        schedule.iloc[0]["market_open"].to_pydatetime(),
+                        schedule.iloc[0]["market_close"].to_pydatetime()
+                    )
+
+            session = self.market_calendar_cache[cache_key]
+            return bool(session and session[0] <= now_utc <= session[1])
+        except Exception as exc:
+            logger.warning(f"Não foi possível validar a sessão de {ticker}: {exc}")
+            # Falha fechada: não são enviados alertas quando não há confirmação de sessão.
+            return False
 
     def _load_watchlist(self):
         if os.path.exists(WATCHLIST_FILE):
@@ -218,8 +267,29 @@ class StockBot:
                 await self.send_direct_msg(f"❌ *ERRO CRÍTICO NO SCAN:* {str(e)[:200]}")
                 return
         current_tickers = set(current_signals.keys())
-        new_tickers = current_tickers - self.last_scan_tickers
-        new_breakouts = {t for t, s in current_signals.items() if s['breakout_2h'] and t not in self.active_breakouts}
+        raw_new_tickers = current_tickers - self.last_scan_tickers
+        raw_new_breakouts = {t for t, s in current_signals.items() if s['breakout_2h'] and t not in self.active_breakouts}
+
+        # Só comunicamos movimentos quando a bolsa desse ativo está em sessão regular.
+        # À noite, em fins de semana e feriados, fornecedores podem atualizar/corrigir barras já
+        # fechadas. Essas alterações não representam uma nova oportunidade negociável.
+        market_open_tickers = {ticker for ticker in current_tickers if self._is_regular_market_open(ticker)}
+
+        # Os ativos vistos fora da sessão ficam pendentes. Serão anunciados apenas se ainda
+        # cumprirem todos os critérios quando a respetiva bolsa voltar a abrir.
+        self.pending_new_tickers.update(raw_new_tickers - market_open_tickers)
+        self.pending_new_tickers.intersection_update(current_tickers)
+        confirmed_deferred_tickers = self.pending_new_tickers & market_open_tickers
+        new_tickers = ((raw_new_tickers & market_open_tickers) | confirmed_deferred_tickers) - self.announced_tickers
+        self.pending_new_tickers.difference_update(new_tickers)
+        self.announced_tickers.update(new_tickers)
+
+        self.pending_breakouts.update(raw_new_breakouts - market_open_tickers)
+        self.pending_breakouts.intersection_update(current_tickers)
+        confirmed_deferred_breakouts = self.pending_breakouts & market_open_tickers
+        new_breakouts = ((raw_new_breakouts & market_open_tickers) | confirmed_deferred_breakouts) - self.announced_breakouts
+        self.pending_breakouts.difference_update(new_breakouts)
+        self.announced_breakouts.update(new_breakouts)
         
         self.last_scan_tickers = current_tickers
         self.active_breakouts = {t for t, s in current_signals.items() if s['breakout_2h']}
@@ -485,6 +555,8 @@ class StockBot:
 
                 loop = asyncio.get_running_loop()
                 for ticker, s in list(self.active_signals.items()):
+                    if not self._is_regular_market_open(ticker):
+                        continue
                     # Obter preço atual rápido
                     import yfinance as yf
                     tk = yf.Ticker(ticker)
@@ -612,6 +684,8 @@ class StockBot:
 
                 loop = asyncio.get_running_loop()
                 for ticker, s in list(self.active_signals.items()):
+                    if not self._is_regular_market_open(ticker):
+                        continue
                     if ticker in self.notified_breakouts: continue
 
                     import yfinance as yf
