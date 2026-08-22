@@ -28,12 +28,8 @@ class StockBot:
     def __init__(self):
         self.config = Config()
         self.scanner = Scanner(self.config)
-        self.token = self.config.TELEGRAM_TOKEN
-        self.chat_id = self.config.TELEGRAM_CHAT_ID
-        if not self.token or not self.chat_id:
-            raise RuntimeError(
-                "Configuração Telegram ausente: define TELEGRAM_BOT_TOKEN (ou TELEGRAM_TOKEN) e TELEGRAM_CHAT_ID."
-            )
+        self.token = os.getenv("TELEGRAM_TOKEN") or self.config.TELEGRAM_TOKEN
+        self.chat_id = os.getenv("TELEGRAM_CHAT_ID") or self.config.TELEGRAM_CHAT_ID
 
         # Memória e Watchlist
         self.last_scan_tickers = set()
