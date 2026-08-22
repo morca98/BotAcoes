@@ -175,9 +175,24 @@ class StockBot:
                 self.last_reset_date = today
 
             logger.info("A iniciar scan dinâmico...")
-            
+
+            progress_msg = None
+
+            async def update_scan_progress(text):
+                nonlocal progress_msg
+                if not is_manual:
+                    return
+                try:
+                    if progress_msg is None:
+                        progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text=text)
+                    else:
+                        await progress_msg.edit_text(text)
+                except Exception as exc:
+                    logger.warning("Não foi possível atualizar o progresso do scan: %s", exc)
+
             self.market_regime = "🟢 <b>MERCADO SAUDÁVEL (Risk-On)</b>"
             try:
+                await update_scan_progress("⏳ Scan 1/4: a calcular o regime de mercado...")
                 # 1. Verificar Regime de Mercado (SPY) e Market Breadth (Saúde Interna)
                 import yfinance as yf
                 loop = asyncio.get_running_loop()
@@ -228,17 +243,22 @@ class StockBot:
                         self.market_regime = f"🟢 <b>MERCADO SAUDÁVEL (Risk-On)</b>{breadth_str}"
 
                 # 2. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
+                await update_scan_progress("⏳ Scan 2/4: a preparar o universo EUA + STOXX 600...")
                 full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
                 full_universe = list(set(full_universe) | self.user_watchlist)
-                
+
                 # 3. Filtrar pelos ativos mais líquidos para manter um ciclo sustentável.
+                await update_scan_progress(
+                    f"⏳ Scan 3/4: a selecionar os {self.config.MAX_SCAN_ASSETS} ativos mais líquidos..."
+                )
                 filtered_universe = await loop.run_in_executor(
                     None, self.scanner.filter_by_liquidity, full_universe, self.config.MAX_SCAN_ASSETS
                 )
-                
+
                 # 4. Pré-carregar Benchmarks (Evitar concorrência de pedidos ao mesmo ETF)
+                await update_scan_progress("⏳ Scan 4/4: a carregar benchmarks e filtros técnicos...")
                 await loop.run_in_executor(None, self.scanner.preload_benchmarks)
-                
+
                 # 5. Analisar ativos em paralelo (com semáforo para evitar bloqueios)
                 current_signals = {}
                 total_to_analyze = len(filtered_universe)
@@ -246,9 +266,7 @@ class StockBot:
                 
                 # Duas análises simultâneas e espaçamento global reduzem a pressão no Yahoo.
                 semaphore = asyncio.Semaphore(2)
-                progress_msg = None
-                if is_manual:
-                    progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text=f"⏳ Progresso: 0% (0/{total_to_analyze})")
+                await update_scan_progress(f"⏳ Análise técnica: 0% (0/{total_to_analyze})")
 
                 analyzed_count = 0
                 request_pacer = asyncio.Lock()
@@ -263,7 +281,7 @@ class StockBot:
                             async with request_pacer:
                                 now_monotonic = loop.time()
                                 wait_for_cooldown = max(0.0, rate_limit_until - now_monotonic)
-                                wait_for_pacing = max(0.0, 1.0 - (now_monotonic - last_request_started))
+                                wait_for_pacing = max(0.0, 0.5 - (now_monotonic - last_request_started))
                                 if wait_for_cooldown or wait_for_pacing:
                                     await asyncio.sleep(max(wait_for_cooldown, wait_for_pacing))
                                 last_request_started = loop.time()
@@ -279,11 +297,11 @@ class StockBot:
                             return ticker, None
                         finally:
                             analyzed_count += 1
-                            if analyzed_count % 20 == 0 or analyzed_count == total_to_analyze:
-                                if progress_msg:
-                                    pct = int((analyzed_count / total_to_analyze) * 100)
-                                    try: await progress_msg.edit_text(f"⏳ Progresso: {pct}% ({analyzed_count}/{total_to_analyze})")
-                                    except: pass
+                            if analyzed_count % 10 == 0 or analyzed_count == total_to_analyze:
+                                pct = int((analyzed_count / total_to_analyze) * 100)
+                                await update_scan_progress(
+                                    f"⏳ Análise técnica: {pct}% ({analyzed_count}/{total_to_analyze})"
+                                )
 
                 tasks = [semi_analyze(t, i) for i, t in enumerate(filtered_universe)]
                 results = await asyncio.gather(*tasks)

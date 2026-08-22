@@ -64,6 +64,14 @@ class LogRemediationTests(unittest.TestCase):
         self.assertIn("threads=False", scanner_source)
         self.assertNotIn("threads=True", scanner_source)
 
+    def test_first_scan_reports_stages_and_regular_progress(self):
+        source = (PROJECT_DIR / "main.py").read_text(encoding="utf-8")
+        self.assertIn("Scan 1/4: a calcular o regime de mercado", source)
+        self.assertIn("Scan 3/4: a selecionar os", source)
+        self.assertIn("Análise técnica: 0%", source)
+        self.assertIn("analyzed_count % 10", source)
+        self.assertIn("0.5 - (now_monotonic - last_request_started)", source)
+
     def test_main_module_is_syntax_valid(self):
         ast.parse((PROJECT_DIR / "main.py").read_text(encoding="utf-8"))
 
