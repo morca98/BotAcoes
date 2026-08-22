@@ -1,11 +1,11 @@
 import logging
-import os
 import json
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
 import io
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +33,35 @@ class Scanner:
     }
 
     THEMATIC_ETFS = ["SMH", "XBI", "IBIT", "IWM", "QQQ", "SPY", "EXSA.DE"]
+    EUROPE_TICKER_RENAMES = {
+        "ASSA B.ST": "ASSA-B.ST", "BALD B.ST": "BALD-B.ST", "HUSQ B.ST": "HUSQ-B.ST",
+        "MAERSK B.CO": "MAERSK-B.CO", "NIBE B.ST": "NIBE-B.ST", "NDA FI.HE": "NDA-FI.HE",
+        "NOV N.SW": "NOVN.SW", "NOVO B.CO": "NOVO-B.CO", "SECU B.ST": "SECU-B.ST",
+        "SKA B.ST": "SKA-B.ST", "SWED A.ST": "SWED-A.ST", "SHB B.ST": "SHB-B.ST",
+        "VOLV B.ST": "VOLV-B.ST", "SWECO B.ST": "SWEC-B.ST", "TREL B.ST": "TREL-B.ST",
+        "VPLAY B.ST": "VPLAY-B.ST",
+    }
 
     def __init__(self, config):
         self.config = config
         self._sector_data_cache = {}
         self._ticker_sectors = {} # Cache de setores: Ticker -> Sector Name
+        self._unavailable_tickers = set()
+        self._data_failures = {}
         self._universe_cache = None
 
+    @classmethod
+    def _normalise_ticker(cls, ticker):
+        if not isinstance(ticker, str):
+            return None
+        ticker = ticker.strip().upper()
+        ticker = cls.EUROPE_TICKER_RENAMES.get(ticker, ticker)
+        if not ticker or ticker == "NAN" or not all(char.isalnum() or char in ".-^" for char in ticker):
+            return None
+        return ticker
+
     def get_dynamic_universe(self):
-        """Obtém componentes do S&P 500, Nasdaq 100 e mapeia setores para evitar chamadas lentas."""
+        """Obtém componentes do S&P 500, Nasdaq 100 e normaliza símbolos antes do scan."""
         tickers = set(self.THEMATIC_ETFS)
         tickers.update(self.config.ASSETS)
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -73,19 +93,23 @@ class Scanner:
         except Exception as e:
             logger.error(f"Erro ao obter índices da Wikipedia: {e}")
 
-        final_list = list(set([t for t in tickers if isinstance(t, str) and t != 'nan']))
+        final_list = [self._normalise_ticker(t) for t in tickers]
+        final_list = [t for t in final_list if t]
         
         # 3. Adicionar STOXX 600 (Europa)
         try:
-            if os.path.exists("stoxx600_tickers.json"):
-                with open("stoxx600_tickers.json", "r") as f:
-                    stoxx_list = json.load(f)
-                    final_list.extend(stoxx_list)
-                    logger.info(f"Adicionados {len(stoxx_list)} ativos do STOXX 600.")
+            stoxx_path = Path(__file__).resolve().parent / "stoxx600_tickers.json"
+            if stoxx_path.exists():
+                with stoxx_path.open("r", encoding="utf-8") as f:
+                    stoxx_raw = json.load(f)
+                stoxx_list = [self._normalise_ticker(t) for t in stoxx_raw]
+                stoxx_list = [t for t in stoxx_list if t]
+                final_list.extend(stoxx_list)
+                logger.info("Adicionados %s ativos STOXX 600 normalizados.", len(stoxx_list))
         except Exception as e:
             logger.error(f"Erro ao carregar STOXX 600: {e}")
 
-        final_list = list(set(final_list))
+        final_list = list(set(final_list) - self._unavailable_tickers)
         
         # De-duplicação: Manter apenas GOOGL (Alphabet)
         if "GOOGL" in final_list and "GOOG" in final_list:
@@ -102,8 +126,8 @@ class Scanner:
             return tickers
 
         data = []
-        # Chunk menor para evitar timeouts e rate limits
-        chunk_size = 50
+        # Pedidos sequenciais e pequenos reduzem a probabilidade de 429 no Yahoo.
+        chunk_size = getattr(self.config, "LIQUIDITY_CHUNK_SIZE", 25)
         import time
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i + chunk_size]
@@ -111,7 +135,7 @@ class Scanner:
             while retries > 0:
                 try:
                     # Usar 5d para garantir dados mesmo em feriados ou mercados fechados
-                    batch = yf.download(chunk, period="5d", group_by='ticker', threads=True, progress=False, timeout=30)
+                    batch = yf.download(chunk, period="5d", group_by="ticker", threads=False, progress=False, timeout=30)
                     
                     for t in chunk:
                         try:
@@ -132,12 +156,13 @@ class Scanner:
                         except:
                             continue
                     
-                    time.sleep(1) # Pequena pausa entre chunks
+                    time.sleep(0.75) # Pausa entre pedidos de lote
                     break # Sucesso, sai do loop de retries
                 except Exception as e:
                     if "429" in str(e) or "Too Many Requests" in str(e):
-                        logger.warning(f"Rate limit no filtro de liquidez. A aguardar 20s... (Tentativas restantes: {retries})")
-                        time.sleep(20)
+                        cooldown = 15 * (4 - retries)
+                        logger.warning(f"Rate limit no filtro de liquidez. Pausa de {cooldown}s (tentativas restantes: {retries}).")
+                        time.sleep(cooldown)
                         retries -= 1
                     else:
                         logger.error(f"Erro no download do chunk: {e}")
@@ -499,6 +524,8 @@ class Scanner:
 
     def analyze(self, ticker: str):
         import time
+        if ticker in self._unavailable_tickers:
+            return None
         retries = 2
         while retries >= 0:
             try:
@@ -524,13 +551,21 @@ class Scanner:
 
                 # 2. Obter histórico (essencial para indicadores)
                 daily = tk.history(period="2y", interval="1d")
-                if daily is None or len(daily) < 50: return None
-                
+                if daily is None or len(daily) < 50:
+                    self._data_failures[ticker] = self._data_failures.get(ticker, 0) + 1
+                    if self._data_failures[ticker] >= 3:
+                        self._unavailable_tickers.add(ticker)
+                    return None
+
                 # Limpeza de NaNs no final (comum em mercados fechados ou erros de dados)
                 daily = daily.dropna(subset=['Close', 'High', 'Low', 'Open'])
                 daily = self._closed_daily_bars(daily)
                 if len(daily) < 252:
+                    self._data_failures[ticker] = self._data_failures.get(ticker, 0) + 1
+                    if self._data_failures[ticker] >= 3:
+                        self._unavailable_tickers.add(ticker)
                     return None
+                self._data_failures.pop(ticker, None)
 
                 # Se o preço falhou no fast_info, pegamos do histórico
                 if current_price is None or np.isnan(current_price):
@@ -545,10 +580,7 @@ class Scanner:
                     min_mc = 500_000_000 if (currency == "EUR" or is_stoxx) else self.config.MIN_MARKET_CAP
                     if market_cap < min_mc: return None
                 
-                # Dados 1h (para 4h e rompimentos) - Otimizado para 30 dias
-                h1 = tk.history(period="30d", interval="60m")
-                if h1 is not None:
-                    h1 = h1.dropna(subset=['Close'])
+                # O histórico intradiário só é pedido depois de o ativo passar os filtros diários.
                 break # Sucesso
             except Exception as e:
                 if "429" in str(e) or "Too Many Requests" in str(e):
@@ -633,8 +665,13 @@ class Scanner:
             ema200_series = daily["Close"].ewm(span=200, adjust=False).mean()
             if len(ema200_series) < 200: return None
             ema200 = float(ema200_series.iloc[-1])
-            
-            h4 = self._aggregate_complete_4h(h1) if h1 is not None else pd.DataFrame()
+
+            # Pedido intradiário apenas para os candidatos que já passaram preço, volatilidade, RSI e RS.
+            h1 = tk.history(period="30d", interval="60m")
+            if h1 is None or h1.empty:
+                return None
+            h1 = h1.dropna(subset=["Close", "Open", "High", "Low"])
+            h4 = self._aggregate_complete_4h(h1)
             if len(h4) < 15:
                 return None
 

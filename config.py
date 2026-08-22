@@ -34,6 +34,10 @@ class Config:
     MIN_ANNUAL_VOL = 0.4
     MAX_SUPPORT_DISTANCE_PCT = 10.0
 
+    # Proteção do fornecedor de dados: mantém o universo amplo, mas analisa os 500 mais líquidos.
+    MAX_SCAN_ASSETS = 500
+    LIQUIDITY_CHUNK_SIZE = 25
+
     # Lista de Ativos (S&P 500 / NASDAQ 100 principais)
     ASSETS = [
         "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "JPM", "V",

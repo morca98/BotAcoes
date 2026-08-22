@@ -180,44 +180,61 @@ class StockBot:
             try:
                 # 1. Verificar Regime de Mercado (SPY) e Market Breadth (Saúde Interna)
                 import yfinance as yf
+                loop = asyncio.get_running_loop()
                 spy = yf.Ticker("SPY")
                 spy_data = spy.history(period="5d", interval="60m")
-                
-                # Calcular Market Breadth rápido (amostra de 30 blue chips do S&P 500)
+
+                # Um só pedido de lote substitui 30 pedidos individuais ao Yahoo.
                 breadth_sample = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "UNH", "XOM", "LLY", "JNJ", "MA", "PG", "HD", "COST", "MRK", "ABBV", "PEP", "KO", "ADBE", "WMT", "BAC", "CRM", "MCD", "ACN", "NFLX", "AMD", "QCOM"]
+
+                def fetch_breadth_batch():
+                    return yf.download(
+                        breadth_sample, period="3mo", interval="1d", group_by="ticker",
+                        threads=False, progress=False, auto_adjust=False,
+                    )
+
                 above_ema50_count = 0
                 total_checked = 0
-                for sample_t in breadth_sample:
-                    try:
-                        df_sample = yf.Ticker(sample_t).history(period="3m", interval="1d")
-                        if not df_sample.empty and len(df_sample) >= 50:
-                            ema50 = df_sample['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
-                            close_p = df_sample['Close'].iloc[-1]
-                            if close_p > ema50:
-                                above_ema50_count += 1
-                            total_checked += 1
-                    except:
-                        continue
-                
-                breadth_pct = (above_ema50_count / total_checked * 100) if total_checked > 0 else 50
-                breadth_str = f" | Breadth (EMA50): <b>{breadth_pct:.0f}%</b>"
-                
+                try:
+                    breadth_data = await loop.run_in_executor(None, fetch_breadth_batch)
+                    for sample_t in breadth_sample:
+                        try:
+                            close_series = breadth_data[sample_t]["Close"].dropna()
+                            if len(close_series) >= 50:
+                                ema50 = close_series.ewm(span=50, adjust=False).mean().iloc[-1]
+                                if close_series.iloc[-1] > ema50:
+                                    above_ema50_count += 1
+                                total_checked += 1
+                        except (KeyError, TypeError):
+                            continue
+                except Exception as e:
+                    logger.warning("Breadth indisponível neste ciclo: %s", e)
+
+                if total_checked >= 15:
+                    breadth_pct = above_ema50_count / total_checked * 100
+                    breadth_str = f" | Breadth (EMA50): <b>{breadth_pct:.0f}%</b>"
+                else:
+                    breadth_pct = None
+                    breadth_str = " | Breadth (EMA50): <b>indisponível</b>"
+                    logger.warning("Breadth indisponível: cobertura insuficiente (%s/%s).", total_checked, len(breadth_sample))
+
                 if not spy_data.empty:
                     spy_price = spy_data['Close'].iloc[-1]
                     spy_ema20 = spy_data['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
-                    if spy_price < spy_ema20 or breadth_pct < 45:
+                    if spy_price < spy_ema20 or (breadth_pct is not None and breadth_pct < 45):
                         self.market_regime = f"⚠️ <b>MERCADO EM QUEDA / FRÁGIL (Risk-Off)</b>{breadth_str}"
-                        logger.warning(f"Mercado frágil. Breadth: {breadth_pct:.1f}%")
+                        logger.warning("Mercado frágil. Breadth: %s", f"{breadth_pct:.1f}%" if breadth_pct is not None else "indisponível")
                     else:
                         self.market_regime = f"🟢 <b>MERCADO SAUDÁVEL (Risk-On)</b>{breadth_str}"
-                
+
                 # 2. Obter Universo Dinâmico (S&P 500 + Nasdaq 100 + ETFs + Watchlist)
-                loop = asyncio.get_running_loop()
                 full_universe = await loop.run_in_executor(None, self.scanner.get_dynamic_universe)
                 full_universe = list(set(full_universe) | self.user_watchlist)
                 
-                # 3. Filtrar por Top Liquidez (1000 ativos)
-                filtered_universe = await loop.run_in_executor(None, self.scanner.filter_by_liquidity, full_universe, 1000)
+                # 3. Filtrar pelos ativos mais líquidos para manter um ciclo sustentável.
+                filtered_universe = await loop.run_in_executor(
+                    None, self.scanner.filter_by_liquidity, full_universe, self.config.MAX_SCAN_ASSETS
+                )
                 
                 # 4. Pré-carregar Benchmarks (Evitar concorrência de pedidos ao mesmo ETF)
                 await loop.run_in_executor(None, self.scanner.preload_benchmarks)
@@ -227,24 +244,37 @@ class StockBot:
                 total_to_analyze = len(filtered_universe)
                 logger.info(f"A iniciar análise paralela de {total_to_analyze} ativos...")
                 
-                semaphore = asyncio.Semaphore(5) # Reduzido para evitar Rate Limit
+                # Duas análises simultâneas e espaçamento global reduzem a pressão no Yahoo.
+                semaphore = asyncio.Semaphore(2)
                 progress_msg = None
                 if is_manual:
                     progress_msg = await self.app.bot.send_message(chat_id=self.chat_id, text=f"⏳ Progresso: 0% (0/{total_to_analyze})")
 
                 analyzed_count = 0
+                request_pacer = asyncio.Lock()
+                last_request_started = 0.0
+                rate_limit_until = 0.0
+
                 async def semi_analyze(ticker, index):
-                    nonlocal analyzed_count
+                    nonlocal analyzed_count, last_request_started, rate_limit_until
                     async with semaphore:
                         try:
-                            await asyncio.sleep(0.5) # Delay entre pedidos
+                            # Espaçamento entre inícios de análise: evita rajadas de pedidos.
+                            async with request_pacer:
+                                now_monotonic = loop.time()
+                                wait_for_cooldown = max(0.0, rate_limit_until - now_monotonic)
+                                wait_for_pacing = max(0.0, 1.0 - (now_monotonic - last_request_started))
+                                if wait_for_cooldown or wait_for_pacing:
+                                    await asyncio.sleep(max(wait_for_cooldown, wait_for_pacing))
+                                last_request_started = loop.time()
                             res = await loop.run_in_executor(None, self.scanner.analyze, ticker)
                             return ticker, res
                         except Exception as e:
                             error_str = str(e)
                             if "Too Many Requests" in error_str or "429" in error_str:
-                                logger.warning("Rate limit detetado. A aguardar 15s...")
-                                await asyncio.sleep(15)
+                                async with request_pacer:
+                                    rate_limit_until = max(rate_limit_until, loop.time() + 60)
+                                logger.warning("Rate limit detetado. Pausa global de 60s ativada.")
                             logger.error(f"Erro em {ticker}: {e}")
                             return ticker, None
                         finally:
