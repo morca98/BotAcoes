@@ -41,6 +41,13 @@ class Scanner:
         "VOLV B.ST": "VOLV-B.ST", "SWECO B.ST": "SWEC-B.ST", "TREL B.ST": "TREL-B.ST",
         "VPLAY B.ST": "VPLAY-B.ST",
     }
+    # Confirmados como sem cotação no Yahoo no deploy de 22/08/2026.
+    # São filtrados antes de qualquer pedido e podem ser revistos quando a composição oficial mudar.
+    STOXX_EXCLUDED_TICKERS = {
+        "ADH.OL", "ALLFG.MC", "BRNW.MI", "CAPP.PA", "CTS.DE", "DSM.SW", "ESLX.PA",
+        "EVR.L", "FALK.CO", "GWI.MI", "LUN.ST", "NSN.HE", "ONT.BR", "PERP.PA",
+        "RIGN.SW", "S4.L", "SCHA.OL", "SKG.IR",
+    }
 
     def __init__(self, config):
         self.config = config
@@ -109,7 +116,9 @@ class Scanner:
         except Exception as e:
             logger.error(f"Erro ao carregar STOXX 600: {e}")
 
-        final_list = list(set(final_list) - self._unavailable_tickers)
+        final_list = list(
+            set(final_list) - self._unavailable_tickers - self.STOXX_EXCLUDED_TICKERS
+        )
         
         # De-duplicação: Manter apenas GOOGL (Alphabet)
         if "GOOGL" in final_list and "GOOG" in final_list:

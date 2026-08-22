@@ -25,6 +25,11 @@ class LogRemediationTests(unittest.TestCase):
         self.assertEqual(self.scanner._normalise_ticker("ASSA B.ST"), "ASSA-B.ST")
         self.assertIsNone(self.scanner._normalise_ticker("INVALID SYMBOL!"))
 
+    def test_confirmed_stale_stoxx_symbols_are_excluded_before_download(self):
+        self.assertIn("GWI.MI", self.scanner.STOXX_EXCLUDED_TICKERS)
+        self.assertIn("PERP.PA", self.scanner.STOXX_EXCLUDED_TICKERS)
+        self.assertNotIn("GWI.MI", set(["GWI.MI"]) - self.scanner.STOXX_EXCLUDED_TICKERS)
+
     def test_failed_symbol_is_skipped_only_after_three_failures(self):
         ticker = "INVALID.DE"
         for _ in range(2):
