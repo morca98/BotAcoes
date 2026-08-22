@@ -8,6 +8,7 @@ from datetime import datetime
 import pytz
 import pandas_market_calendars as mcal
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import InvalidToken
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from config import Config
@@ -27,9 +28,13 @@ class StockBot:
     def __init__(self):
         self.config = Config()
         self.scanner = Scanner(self.config)
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN") or self.config.TELEGRAM_TOKEN
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID") or self.config.TELEGRAM_CHAT_ID
-        
+        self.token = self.config.TELEGRAM_TOKEN
+        self.chat_id = self.config.TELEGRAM_CHAT_ID
+        if not self.token or not self.chat_id:
+            raise RuntimeError(
+                "Configuração Telegram ausente: define TELEGRAM_BOT_TOKEN (ou TELEGRAM_TOKEN) e TELEGRAM_CHAT_ID."
+            )
+
         # Memória e Watchlist
         self.last_scan_tickers = set()
         self.active_breakouts = set()
@@ -111,29 +116,33 @@ class StockBot:
             json.dump(list(self.user_watchlist), f)
 
     async def send_direct_msg(self, text: str):
-        """Envia mensagens longas dividindo-as se necessário e usando HTML para estabilidade."""
-        try:
-            # Limite do Telegram é 4096 carateres
-            if len(text) <= 4000:
-                await self.app.bot.send_message(chat_id=self.chat_id, text=text, parse_mode="HTML")
+        """Envia texto HTML em blocos de linhas, sem cortar tags ou perder conteúdo."""
+        lines = text.splitlines(keepends=True) or [text]
+        chunks, current = [], ""
+        for line in lines:
+            if len(line) > 3800:
+                # Mensagens criadas pelo bot não devem atingir este caso; preserva o texto em blocos.
+                if current:
+                    chunks.append(current)
+                    current = ""
+                chunks.extend(line[i:i + 3800] for i in range(0, len(line), 3800))
+            elif current and len(current) + len(line) > 3800:
+                chunks.append(current)
+                current = line
             else:
-                # Dividir por blocos de ativos (🔹)
-                parts = text.split("🔹")
-                current_msg = parts[0]
-                for part in parts[1:]:
-                    if len(current_msg) + len(part) + 2 > 4000:
-                        await self.app.bot.send_message(chat_id=self.chat_id, text=current_msg, parse_mode="HTML")
-                        current_msg = "🔹" + part
-                    else:
-                        current_msg += "🔹" + part
-                if current_msg:
-                    await self.app.bot.send_message(chat_id=self.chat_id, text=current_msg, parse_mode="HTML")
-        except Exception as e:
-            logger.error(f"Erro ao enviar mensagem: {e}")
-            # Tentar enviar sem formatação se falhar
+                current += line
+        if current:
+            chunks.append(current)
+
+        for chunk in chunks:
             try:
-                await self.app.bot.send_message(chat_id=self.chat_id, text=text[:4000])
-            except: pass
+                await self.app.bot.send_message(chat_id=self.chat_id, text=chunk, parse_mode="HTML")
+            except Exception as exc:
+                logger.error("Erro ao enviar mensagem HTML: %s", exc)
+                try:
+                    await self.app.bot.send_message(chat_id=self.chat_id, text=html.unescape(chunk))
+                except Exception as fallback_exc:
+                    logger.error("Erro ao enviar mensagem simples: %s", fallback_exc)
 
     async def send_alert_with_buttons(self, text: str, ticker: str):
         """Envia alerta com botão de acesso direto ao TradingView."""
@@ -238,7 +247,7 @@ class StockBot:
                         except Exception as e:
                             error_str = str(e)
                             if "Too Many Requests" in error_str or "429" in error_str:
-                                logger.warning(f"Rate limit detetado. A aguardar 15s...")
+                                logger.warning("Rate limit detetado. A aguardar 15s...")
                                 await asyncio.sleep(15)
                             logger.error(f"Erro em {ticker}: {e}")
                             return ticker, None
@@ -296,8 +305,6 @@ class StockBot:
         self.active_signals = current_signals # Guardar para monitorização de toques
         # REMOVIDO: self.notified_touches = set() -> Agora o reset é diário no topo do run_scan
 
-        msg = ""
-        
         # Função para calcular pontuação de ranking (Prioridade: Estrelas > RS)
         def get_rank_score(s):
             import numpy as np
@@ -638,35 +645,27 @@ class StockBot:
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
                                 
-                                if strength_score > 1:
-                                    await self.send_alert_with_buttons(alert, ticker)
-                                    logger.info(f"Alerta enviado para {ticker} com força {strength_score}/6")
-                                    # Adicionar ao histórico
-                                    now_time = datetime.now(LISBON_TZ)
-                                    self.signal_history.append({
-                                        'ticker': ticker, 'type': 'Suporte', 
-                                        'score_bar': strength_bar, 'price': current_price_fmt,
-                                        'time': now_time
-                                    })
-                                    if len(self.signal_history) > 5: self.signal_history.pop(0)
-                                    
-                                # Registar para detecção de Combo (Sinais Combinados)
+                                if strength_score <= 1:
+                                    logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
+                                    continue
+
+                                now_time = datetime.now(LISBON_TZ)
+                                await self.send_alert_with_buttons(alert, ticker)
+                                logger.info(f"Alerta enviado para {ticker} com força {strength_score}/6")
+                                self.signal_history.append({
+                                    'ticker': ticker, 'type': 'Suporte',
+                                    'score_bar': strength_bar, 'price': current_price_fmt,
+                                    'time': now_time
+                                })
+                                if len(self.signal_history) > 5:
+                                    self.signal_history.pop(0)
+
                                 self.recent_supports[ticker] = {
                                     'time': now_time,
                                     'type': sup['type'],
                                     'price': sup['price']
                                 }
-                                
-                                # Verificação Simétrica: Se houve rompimento recente (nas últimas 48h), atualizar a mensagem ou enviar alerta combinado
-                                if ticker in self.recent_breakouts:
-                                    b_info = self.recent_breakouts[ticker]
-                                    b_time_diff = (now_time - b_info['time']).total_seconds() / 3600
-                                    if b_time_diff <= 48:
-                                        logger.info(f"Detetado Combo simétrico (Rompimento + Suporte) para {ticker}!")
-                            else:
-                                logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
-                                
-                            self.notified_touches.add(touch_key)
+                                self.notified_touches.add(touch_key)
                 self.last_support_check_time = datetime.now(LISBON_TZ) # Heartbeat
             except Exception as e:
                 logger.error(f"Erro no monitor de suportes: {e}")
@@ -847,7 +846,13 @@ class StockBot:
         # Usar a forma recomendada para v20+ em ambientes com loops ativos
         import nest_asyncio
         nest_asyncio.apply()
-        self.app.run_polling(drop_pending_updates=True, close_loop=False)
+        try:
+            self.app.run_polling(drop_pending_updates=True, close_loop=False)
+        except InvalidToken:
+            logger.critical(
+                "A credencial Telegram foi rejeitada. Atualiza a variável Telegram no Railway e faz novo deploy."
+            )
+            raise SystemExit(1)
 
 if __name__ == "__main__":
     bot = StockBot()

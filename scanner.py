@@ -6,8 +6,6 @@ import pandas as pd
 import numpy as np
 import requests
 import io
-from datetime import datetime
-import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +13,7 @@ class Scanner:
     SECTOR_ETFS = {
         # Mapeamento Wikipedia (GICS)
         "Information Technology": "XLK",
-        "Financials": "XLK",
+        "Financials": "XLF",
         "Health Care": "XLV",
         "Consumer Discretionary": "XLY",
         "Consumer Staples": "XLP",
@@ -184,6 +182,41 @@ class Scanner:
         for etf in set(self.SECTOR_ETFS.values()):
             self._get_sector_etf_data(etf)
 
+    @staticmethod
+    def _closed_daily_bars(df):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        frame = df.copy().sort_index()
+        now = pd.Timestamp.now(tz=getattr(frame.index, "tz", None))
+        if getattr(now, "tzinfo", None) is not None and getattr(frame.index, "tz", None) is None:
+            now = now.tz_localize(None)
+        if frame.index[-1].date() == now.date():
+            frame = frame.iloc[:-1]
+        return frame
+
+    @staticmethod
+    def _closed_hourly_bars(df):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        frame = df.copy().sort_index()
+        now = pd.Timestamp.now(tz=getattr(frame.index, "tz", None))
+        last_start = frame.index[-1]
+        if getattr(last_start, "tzinfo", None) is None and getattr(now, "tzinfo", None) is not None:
+            now = now.tz_localize(None)
+        if now < last_start + pd.Timedelta(hours=1):
+            frame = frame.iloc[:-1]
+        return frame
+
+    def _aggregate_complete_4h(self, h1_df):
+        h1_df = self._closed_hourly_bars(h1_df)
+        if h1_df.empty:
+            return pd.DataFrame()
+        counts = h1_df["Close"].resample("4h").count()
+        h4_df = h1_df.resample("4h").agg({
+            "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"
+        }).dropna()
+        return h4_df.loc[counts.reindex(h4_df.index).fillna(0) >= 4]
+
     def _check_divergence(self, prices, indicator):
         """Deteção de divergência bullish profissional: Preço faz nova mínima, mas indicador não."""
         if len(prices) < 30 or len(indicator) < 30: return False
@@ -212,16 +245,15 @@ class Scanner:
         return False
 
     def _check_breakout_2h(self, h1_df):
-        if len(h1_df) < 20: return False
+        h1_df = self._closed_hourly_bars(h1_df)
+        if len(h1_df) < 22:
+            return False
         h2_df = h1_df.resample('2h').agg({
             'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
         }).dropna()
-        if len(h2_df) < 10: return False
-        current_close = h2_df['Close'].iloc[-1]
-        previous_highs_max = h2_df['High'].iloc[-11:-1].max()
-        if current_close > previous_highs_max:
-            return True
-        return False
+        if len(h2_df) < 11:
+            return False
+        return bool(h2_df['Close'].iloc[-1] > h2_df['High'].iloc[-11:-1].max())
 
     def get_breakout_details(self, h1_df, daily_df):
         """Retorna detalhes ricos para o alerta de rompimento (Volume ratio, VCP, Distância, Alvo)."""
@@ -229,11 +261,12 @@ class Scanner:
             if len(h1_df) < 20 or len(daily_df) < 20:
                 return {"vol_ratio": 1.0, "is_vcp": False, "dist_pct": 0.0, "target": 0.0}
             
+            h1_df = self._closed_hourly_bars(h1_df)
             h2_df = h1_df.resample('2h').agg({
                 'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
             }).dropna()
-            
-            if len(h2_df) < 10:
+
+            if len(h2_df) < 11:
                 return {"vol_ratio": 1.0, "is_vcp": False, "dist_pct": 0.0, "target": 0.0}
             
             current_close = h2_df['Close'].iloc[-1]
@@ -297,8 +330,17 @@ class Scanner:
             tk = yf.Ticker(ticker)
             # Obter dados de 15 minutos (último dia para garantir dados suficientes)
             df = tk.history(period="1d", interval="15m")
-            if len(df) < 2: return False
-            
+            if df is None or df.empty:
+                return False
+            now = pd.Timestamp.now(tz=getattr(df.index, "tz", None))
+            last_start = df.index[-1]
+            if getattr(last_start, "tzinfo", None) is None and getattr(now, "tzinfo", None) is not None:
+                now = now.tz_localize(None)
+            if now < last_start + pd.Timedelta(minutes=15):
+                df = df.iloc[:-1]
+            if len(df) < 2:
+                return False
+
             last_candle = df.iloc[-1]
             prev_candle = df.iloc[-2]
             
@@ -330,16 +372,17 @@ class Scanner:
         return float(vwap.iloc[-1])
 
     def get_key_supports(self, ticker, current_price, daily_data):
-        """Calcula zonas de suporte com clustering, EMA 70/200 e Golden Pocket Fibonacci."""
+        """Calcula zonas abaixo do preço usando sessões diária e semanal fechadas."""
         all_levels = []
         try:
-            if daily_data is None or len(daily_data) < 20: return []
-            
-            # 1. Níveis Técnicos (EMA e Fibonacci)
+            daily_data = self._closed_daily_bars(daily_data)
+            if daily_data is None or len(daily_data) < 200:
+                return []
+
             ema200 = float(daily_data["Close"].ewm(span=200, adjust=False).mean().iloc[-1])
             ema70 = float(daily_data["Close"].ewm(span=70, adjust=False).mean().iloc[-1])
-            
-            last_year = daily_data.iloc[-252:] if len(daily_data) >= 252 else daily_data
+
+            last_year = daily_data.iloc[-252:]
             high_52w = float(last_year['High'].max())
             low_52w = float(last_year['Low'].min())
             
@@ -362,7 +405,7 @@ class Scanner:
             for label, price in tech_candidates:
                 if price < current_price:
                     dist = ((current_price - price) / price) * 100
-                    if dist <= 12.0:
+                    if dist <= self.config.MAX_SUPPORT_DISTANCE_PCT:
                         all_levels.append({"type": label, "price": price, "is_tech": True})
 
             # 2. Aberturas Virgens (Diárias e Semanais)
@@ -373,23 +416,24 @@ class Scanner:
                 d_open, d_time = float(row['Open']), row.name
                 if d_open < current_price:
                     dist = ((current_price - d_open) / d_open) * 100
-                    if dist <= 12.0:
+                    if dist <= self.config.MAX_SUPPORT_DISTANCE_PCT:
                         is_virgin = True
                         if i > 1:
                             min_after = rev_low_min.iloc[-i+1:].min()
                             if min_after < (d_open * 0.999): is_virgin = False
                         if is_virgin:
-                            label = "Diária (Hoje)" if i == 1 else f"Diária ({d_time.strftime('%d/%m')})"
+                            label = f"Diária ({d_time.strftime('%d/%m')})"
                             all_levels.append({"type": label, "price": d_open, "is_tech": False})
 
-            weekly_data = daily_data.resample('W-MON').agg({'Open': 'first', 'Low': 'min'}).dropna()
+            weekly_data = daily_data.resample('W-FRI').agg({'Open': 'first', 'Low': 'min'}).dropna()
+            weekly_data = weekly_data[weekly_data.index.date <= daily_data.index[-1].date()]
             weekly_opens = weekly_data.iloc[-53:]
             for i in range(len(weekly_opens)):
                 w_row = weekly_opens.iloc[i]
                 w_open, w_time = float(w_row['Open']), w_row.name
                 if w_open < current_price:
                     dist = ((current_price - w_open) / w_open) * 100
-                    if dist <= 12.0:
+                    if dist <= self.config.MAX_SUPPORT_DISTANCE_PCT:
                         after_w = daily_data[daily_data.index > w_time]
                         is_virgin = True
                         if not after_w.empty and float(after_w['Low'].min()) < (w_open * 0.999): is_virgin = False
@@ -451,7 +495,7 @@ class Scanner:
             return sorted(final_zones, key=lambda x: x['dist'])[:5]
         except Exception as e:
             logger.error(f"Erro ao calcular suportes para {ticker}: {e}")
-        return supports
+        return []
 
     def analyze(self, ticker: str):
         import time
@@ -484,7 +528,9 @@ class Scanner:
                 
                 # Limpeza de NaNs no final (comum em mercados fechados ou erros de dados)
                 daily = daily.dropna(subset=['Close', 'High', 'Low', 'Open'])
-                if len(daily) < 50: return None
+                daily = self._closed_daily_bars(daily)
+                if len(daily) < 252:
+                    return None
 
                 # Se o preço falhou no fast_info, pegamos do histórico
                 if current_price is None or np.isnan(current_price):
@@ -588,31 +634,19 @@ class Scanner:
             if len(ema200_series) < 200: return None
             ema200 = float(ema200_series.iloc[-1])
             
-            if h1 is not None and len(h1) >= 14:
-                # RSI 4h (aproximado por H1 resampled ou direto no H1 para velocidade)
-                rsi_h1_series = self._rsi(h1["Close"], 14)
-                rsi_h1 = float(rsi_h1_series.iloc[-1])
-                
-                # Filtro RSI 4h < 50
-                if rsi_h1 >= self.config.MAX_RSI_4H:
-                    logger.debug(f"Rejeitado {ticker}: RSI 4h {rsi_h1:.2f} >= {self.config.MAX_RSI_4H}")
-                    return None
-                
-                # MACD H1 para divergência
-                exp1 = h1["Close"].ewm(span=12, adjust=False).mean()
-                exp2 = h1["Close"].ewm(span=26, adjust=False).mean()
-                macd_h1 = exp1 - exp2
-                
-                # Auditoria: Divergências e Breakouts
-                has_div_rsi = self._check_divergence(h1["Close"], rsi_h1_series)
-                has_div_macd = self._check_divergence(h1["Close"], macd_h1)
-                div_bullish = has_div_rsi or has_div_macd
-                breakout_2h = self._check_breakout_2h(h1)
-            else:
-                # Se não houver dados intraday, usamos os diários como fallback conservador
-                rsi_h1 = rsi_daily
-                div_bullish = False
-                breakout_2h = False
+            h4 = self._aggregate_complete_4h(h1) if h1 is not None else pd.DataFrame()
+            if len(h4) < 15:
+                return None
+
+            rsi_4h_series = self._rsi(h4["Close"], 14)
+            rsi_4h = float(rsi_4h_series.iloc[-1])
+            if rsi_4h >= self.config.MAX_RSI_4H:
+                logger.debug(f"Rejeitado {ticker}: RSI 4h {rsi_4h:.2f} >= {self.config.MAX_RSI_4H}")
+                return None
+
+            macd_4h = h4["Close"].ewm(span=12, adjust=False).mean() - h4["Close"].ewm(span=26, adjust=False).mean()
+            div_bullish = self._check_divergence(h4["Close"], rsi_4h_series) or self._check_divergence(h4["Close"], macd_4h)
+            breakout_2h = self._check_breakout_2h(h1)
 
             is_vcp = self._check_vcp(daily)
             atr_series = self._atr(daily, 14)
@@ -623,10 +657,6 @@ class Scanner:
             atr_pct = (atr / current_price) * 100
             dist_ema20 = ((current_price - ema20) / ema20) * 100
 
-            # 4. Anchored VWAP (Topos e Fundos das últimas 4 semanas)
-            avwap_low = self._calculate_avwap(daily, "low")
-            avwap_high = self._calculate_avwap(daily, "high")
-            
             # Calcular suportes virgens usando os dados já carregados
             supports = self.get_key_supports(ticker, current_price, daily)
             
@@ -651,12 +681,13 @@ class Scanner:
             is_stretched = dist_ema20 > 6.0 # Mais de 6% longe da EMA 20
             
             # Validação final para evitar NaN no relatório
-            metrics = [current_price, rsi_daily, rsi_h1, atr_pct, relative_strength, dist_ema20]
+            metrics = [current_price, rsi_daily, rsi_4h, atr_pct, relative_strength, dist_ema20]
             if any(np.isnan(m) or np.isinf(m) for m in metrics):
                 return None
 
             if rsi_daily > self.config.MAX_RSI_DAILY: return None
-            if rsi_h1 > self.config.MAX_RSI_4H: return None
+            if rsi_4h > self.config.MAX_RSI_4H:
+                return None
             # O preço deve estar acima da EMA 200 para garantir tendência de longo prazo
             if current_price < ema200: return None
             if atr_pct < self.config.MIN_ATR_PCT: return None
@@ -666,7 +697,7 @@ class Scanner:
                 "ticker": ticker,
                 "price": round(current_price, 2),
                 "rsi_daily": round(rsi_daily, 2),
-                "rsi_4h": round(rsi_h1, 2),
+                "rsi_4h": round(rsi_4h, 2),
                 "ema20": round(ema20, 2),
                 "atr_pct": round(atr_pct, 2),
                 "rs_sector": round(relative_strength, 2),
@@ -685,32 +716,34 @@ class Scanner:
             return None
 
     def _get_earnings_days(self, ticker: str):
-        """Calcula os dias restantes para os próximos resultados (Earnings)."""
+        """Calcula dias até aos próximos resultados para formatos DataFrame ou dicionário."""
         try:
-            tk = yf.Ticker(ticker)
-            calendar = tk.calendar
-            if calendar is not None and not calendar.empty:
-                # O formato pode variar, mas geralmente tem uma coluna ou índice com datas
-                for col in calendar.columns:
-                    if 'Earnings Date' in str(col) or 'Date' in str(col):
-                        dates = pd.to_datetime(calendar[col])
-                        now = pd.Timestamp.now(tz=dates.dt.tz) if dates.dt.tz else pd.Timestamp.now()
-                        future_dates = [d for d in dates if d >= now]
-                        if future_dates:
-                            next_date = min(future_dates)
-                            days_left = (next_date - now).days
-                            return max(0, days_left)
-            # Tentar via info se calendar falhar
-            info = tk.info
-            earnings_ts = info.get('nextEarningsDate')
-            if earnings_ts:
-                import datetime
-                next_date = datetime.datetime.fromtimestamp(earnings_ts)
-                days_left = (next_date - datetime.datetime.now()).days
-                return max(0, days_left)
-        except Exception as e:
-            logger.debug(f"Não foi possível obter earnings para {ticker}: {e}")
-        return None
+            calendar = yf.Ticker(ticker).calendar
+            dates = []
+            if isinstance(calendar, pd.DataFrame):
+                for column in calendar.columns:
+                    if "earnings" in str(column).lower() or "date" in str(column).lower():
+                        dates.extend(pd.to_datetime(calendar[column], errors="coerce").dropna().tolist())
+            elif isinstance(calendar, dict):
+                for key, value in calendar.items():
+                    if "earnings" in str(key).lower() or "date" in str(key).lower():
+                        values = value if isinstance(value, (list, tuple, pd.Series)) else [value]
+                        dates.extend(pd.to_datetime(values, errors="coerce").dropna().tolist())
+
+            now = pd.Timestamp.now(tz="UTC")
+            future_days = []
+            for date in dates:
+                timestamp = pd.Timestamp(date)
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.tz_localize("UTC")
+                else:
+                    timestamp = timestamp.tz_convert("UTC")
+                if timestamp >= now:
+                    future_days.append((timestamp - now).days)
+            return max(0, min(future_days)) if future_days else None
+        except Exception as exc:
+            logger.debug("Não foi possível obter earnings para %s: %s", ticker, exc)
+            return None
 
     @staticmethod
     def _rsi(series: pd.Series, period: int = 14) -> pd.Series:
