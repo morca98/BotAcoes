@@ -229,6 +229,26 @@ class Scanner:
         return frame
 
     @staticmethod
+    def _closed_weekly_bars(df):
+        """Agrega sessões diárias em semanas concluídas; a semana em curso nunca é suporte."""
+        if df is None or df.empty:
+            return pd.DataFrame()
+        frame = df.copy().sort_index()
+        last_daily_session = frame.index[-1].normalize()
+        # Uma semana de mercado só fica válida após a sessão de sexta-feira. Se a
+        # última sessão fechada ainda for de segunda a quinta, a semana atual é
+        # explicitamente descartada, mesmo que o resample W-FRI já tenha criado
+        # uma barra semanal parcial com rótulo de sexta-feira.
+        if last_daily_session.weekday() < 4:
+            last_completed_week_end = last_daily_session - pd.Timedelta(
+                days=last_daily_session.weekday() + 3
+            )
+        else:
+            last_completed_week_end = last_daily_session
+        weekly = frame.resample('W-FRI').agg({'Open': 'first', 'Low': 'min'}).dropna()
+        return weekly.loc[weekly.index <= last_completed_week_end]
+
+    @staticmethod
     def _closed_hourly_bars(df):
         if df is None or df.empty:
             return pd.DataFrame()
@@ -459,8 +479,10 @@ class Scanner:
                             label = f"Diária ({d_time.strftime('%d/%m')})"
                             all_levels.append({"type": label, "price": d_open, "is_tech": False})
 
-            weekly_data = daily_data.resample('W-FRI').agg({'Open': 'first', 'Low': 'min'}).dropna()
-            weekly_data = weekly_data[weekly_data.index.date <= daily_data.index[-1].date()]
+            # A semana em curso é explicitamente inválida como origem de suporte.
+            # Só semanas concluídas até à sessão de sexta-feira podem fornecer
+            # uma abertura semanal virgem.
+            weekly_data = self._closed_weekly_bars(daily_data)
             weekly_opens = weekly_data.iloc[-53:]
             for i in range(len(weekly_opens)):
                 w_row = weekly_opens.iloc[i]

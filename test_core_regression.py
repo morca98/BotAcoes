@@ -34,6 +34,20 @@ class ScannerRegressionTests(unittest.TestCase):
             closed = self.scanner._closed_daily_bars(frame)
         self.assertEqual(list(closed.index.date), [pd.Timestamp("2026-08-19").date(), pd.Timestamp("2026-08-20").date()])
 
+    def test_current_week_is_excluded_from_weekly_supports(self):
+        frame = self.make_ohlcv(pd.bdate_range("2026-08-17", periods=8))
+        # A 26/08 é quarta-feira: a última sessão concluída é terça, mas a
+        # semana cujo rótulo W-FRI é 28/08 ainda não pode originar suporte.
+        with patch("scanner.pd.Timestamp.now", return_value=pd.Timestamp("2026-08-26 12:00")):
+            daily = self.scanner._closed_daily_bars(frame)
+        weekly = self.scanner._closed_weekly_bars(daily)
+        self.assertEqual(list(weekly.index.date), [pd.Timestamp("2026-08-21").date()])
+
+    def test_weekly_support_becomes_valid_after_friday_close(self):
+        frame = self.make_ohlcv(pd.bdate_range("2026-08-17", periods=5))
+        weekly = self.scanner._closed_weekly_bars(frame)
+        self.assertEqual(list(weekly.index.date), [pd.Timestamp("2026-08-21").date()])
+
     def test_current_hourly_bar_is_excluded(self):
         frame = self.make_ohlcv(pd.date_range("2026-08-21 14:00", periods=3, freq="h"))
         with patch("scanner.pd.Timestamp.now", return_value=pd.Timestamp("2026-08-21 16:30")):
