@@ -721,7 +721,14 @@ class StockBot:
                                 self.recent_supports[ticker] = {
                                     'time': now_time,
                                     'type': sup['type'],
-                                    'price': sup['price']
+                                    'price': sup['price'],
+                                    'confluences': list(conf_list),
+                                    'strength_score': strength_score,
+                                    'strength_bar': strength_bar,
+                                    'volume_spike': vol_spike,
+                                    'div_bullish': bool(s.get('div_bullish')),
+                                    'pullback_leadership': pullback_leadership,
+                                    'virgin': virgin_support,
                                 }
                                 self.notified_touches.add(touch_key)
                 self.last_support_check_time = datetime.now(LISBON_TZ) # Heartbeat
@@ -801,8 +808,28 @@ class StockBot:
                             time_diff = (datetime.now(LISBON_TZ) - sup_info['time']).total_seconds() / 3600
                             if time_diff <= 48: # Janela de 48 horas
                                 header = "🎯 <b>CONFLUÊNCIA EXTREMA (Combo)</b>"
+                                support_type = html.escape(str(sup_info.get('type', 'Suporte')))
+                                support_price = html.escape(str(sup_info.get('price', '—')))
+                                confluences = [html.escape(str(item)) for item in sup_info.get('confluences', [])]
+                                confluence_text = " + ".join(confluences) if confluences else "Detalhes não disponíveis"
+                                support_score = sup_info.get('strength_score')
+                                support_bar = sup_info.get('strength_bar', '')
+                                score_text = f"{support_bar} ({support_score}/6)" if support_score is not None else "—"
+                                confirmations = ["Reversão 15m confirmada"]
+                                if sup_info.get('volume_spike'):
+                                    confirmations.append("Pico de volume")
+                                if sup_info.get('div_bullish'):
+                                    confirmations.append("Divergência bullish")
+                                if sup_info.get('pullback_leadership'):
+                                    confirmations.append("Liderança no pullback")
+                                if sup_info.get('virgin') and not any("Abertura Virgem" in item for item in confluences):
+                                    confirmations.append("Abertura virgem")
+
                                 combo_msg = (f"\n⚡ <b>Impulso de Reversão Detetado!</b>\n"
-                                             f"   └ Este ativo defendeu o suporte <b>{sup_info['type']}</b> (${sup_info['price']}) nas últimas {int(time_diff)}h.")
+                                             f"   └ Suporte defendido: <b>{support_type}</b> (<code>${support_price}</code>) há {int(time_diff)}h\n"
+                                             f"   └ <b>Força no suporte:</b> {score_text}\n"
+                                             f"   └ <b>Confluências:</b> {confluence_text}\n"
+                                             f"   └ <b>Confirmações:</b> {' + '.join(confirmations)}")
 
                         alert = (f"{header}\n"
                                  f"🔥 <b>{ticker_esc}</b> rompeu a resistência recente!\n"

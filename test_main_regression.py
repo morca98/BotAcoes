@@ -226,5 +226,75 @@ class MainRegressionTests(unittest.TestCase):
         self.assertIn("Abertura Virgem", sent_alerts[0][1])
 
 
+    def test_combo_breakout_includes_prior_support_confluence_details(self):
+        bot = self.make_bot()
+        bot.active_signals = {"TEST": {"rs_sector": 1.18, "rsi_daily": 46.2}}
+        bot.notified_breakouts = set()
+        bot.recent_breakouts = {}
+        bot.signal_history = []
+        bot._is_regular_market_open = lambda _ticker: True
+        bot.recent_supports = {
+            "TEST": {
+                "time": (pd.Timestamp.now(tz=LISBON_TZ) - pd.Timedelta(hours=6)).to_pydatetime(),
+                "type": "Zona (3 níveis)",
+                "price": "207.80 - 208.15",
+                "confluences": ["EMA 70", "Fib 61.8%", "Abertura Virgem 🆕"],
+                "strength_score": 5,
+                "strength_bar": "🟢🟢🟢🟢🟢⚪",
+                "volume_spike": True,
+                "div_bullish": True,
+                "pullback_leadership": True,
+                "virgin": True,
+            }
+        }
+        sent_alerts = []
+
+        class ScannerStub:
+            def _check_breakout_2h(self, _data):
+                return True
+
+            def get_breakout_details(self, *_args):
+                return {"vol_ratio": 1.6, "is_vcp": True, "dist_pct": 0.45, "target": 223.0}
+
+            def _check_pullback_leadership(self, *_args):
+                return True
+
+        bot.scanner = ScannerStub()
+
+        class TickerStub:
+            def history(self, **_kwargs):
+                index = pd.date_range("2026-08-21 14:00", periods=25, freq="h")
+                return pd.DataFrame({
+                    "Close": [212.4] * 25, "High": [213.0] * 25,
+                    "Low": [211.0] * 25, "Volume": [100.0] * 25,
+                }, index=index)
+
+        class YFStub:
+            @staticmethod
+            def Ticker(_ticker):
+                return TickerStub()
+
+        async def capture_alert(text, ticker):
+            sent_alerts.append((ticker, text))
+
+        async def stop_after_alert(_seconds):
+            raise asyncio.CancelledError()
+
+        bot.send_alert_with_buttons = capture_alert
+        with patch.dict("sys.modules", {"yfinance": YFStub()}), patch("main.asyncio.sleep", side_effect=stop_after_alert):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(bot.breakout_monitor_loop())
+
+        self.assertEqual(len(sent_alerts), 1)
+        text = sent_alerts[0][1]
+        self.assertIn("CONFLUÊNCIA EXTREMA", text)
+        self.assertIn("Zona (3 níveis)", text)
+        self.assertIn("207.80 - 208.15", text)
+        self.assertIn("Força no suporte", text)
+        self.assertIn("(5/6)", text)
+        self.assertIn("EMA 70 + Fib 61.8% + Abertura Virgem", text)
+        self.assertIn("Reversão 15m confirmada + Pico de volume + Divergência bullish + Liderança no pullback", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
