@@ -621,8 +621,15 @@ class StockBot:
                     supports = await loop.run_in_executor(None, self.scanner.get_key_supports, ticker, current_price, daily_data)
                     
                     for sup in supports:
-                        # Notificar apenas se for VIRGEM e estiver muito próximo (< 0.2%)
-                        if sup['virgin'] and sup['dist'] <= 0.2:
+                        # Uma abertura virgem continua elegível, mas uma confluência técnica
+                        # (EMA 200/70, Fibonacci ou AVWAP) também pode originar alerta.
+                        # Mantemos a proximidade, a reversão 15m e o score mínimo como salvaguardas.
+                        has_technical_confluence = any(
+                            sup.get(key, False)
+                            for key in ("conf_ema200", "conf_ema70", "conf_fib", "conf_avwap")
+                        )
+                        is_alert_eligible = sup.get('virgin', False) or has_technical_confluence
+                        if is_alert_eligible and sup['dist'] <= 0.2:
                             touch_key = f"{ticker}_{sup['type']}_{sup['price']}"
                             if touch_key not in self.notified_touches:
                                 # 1. Confirmação de Reversão 15m (Mínima e Máxima Superior)
