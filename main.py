@@ -675,8 +675,15 @@ class StockBot:
 
                                 rs_msg = "⚡ <b>Liderança no Pullback (Resiliência Forte)</b>" if pullback_leadership else ""
 
-                                # Barra de Força (Escala de 1 a 6 com base nas confluências, volume, divergência e momentum)
-                                total_points = conf_count + (1 if vol_spike else 0) + (1 if s.get('div_bullish') else 0) + (1 if pullback_leadership else 0)
+                                # Barra de Força (escala 1–6): confluências, abertura virgem,
+                                # volume, divergência e liderança no pullback.
+                                virgin_support = bool(sup.get('virgin', False))
+                                if virgin_support:
+                                    conf_list.append("Abertura Virgem 🆕")
+                                total_points = (
+                                    conf_count + (1 if virgin_support else 0) + (1 if vol_spike else 0)
+                                    + (1 if s.get('div_bullish') else 0) + (1 if pullback_leadership else 0)
+                                )
                                 strength_score = min(6, max(1, total_points))
                                 strength_bar = "🟢" * strength_score + "⚪" * (6 - strength_score)
                                 

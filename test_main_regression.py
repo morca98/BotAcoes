@@ -164,5 +164,67 @@ class MainRegressionTests(unittest.TestCase):
         self.assertEqual(len(bot.signal_history), 1)
 
 
+    def test_virgin_support_adds_one_point_to_strength(self):
+        bot = self.make_bot()
+        bot.active_signals = {"TEST": {"div_bullish": False, "rs_sector": 1.1, "rsi_daily": 40.0}}
+        bot.notified_touches = set()
+        bot.recent_supports = {}
+        bot.signal_history = []
+        bot.last_support_check_time = pd.Timestamp.now(tz=LISBON_TZ).to_pydatetime()
+        bot._is_regular_market_open = lambda _ticker: True
+        sent_alerts = []
+
+        class ScannerStub:
+            def get_key_supports(self, *_args):
+                return [{
+                    "virgin": True, "dist": 0.1, "type": "Diária", "price": "100.00",
+                    "conf_ema200": False, "conf_ema70": False,
+                    "conf_fib": False, "conf_avwap": False,
+                }]
+
+            def check_reversal_15m(self, _ticker):
+                return True
+
+            def _check_pullback_leadership(self, *_args):
+                return False
+
+        bot.scanner = ScannerStub()
+
+        class TickerStub:
+            def history(self, **kwargs):
+                interval = kwargs.get("interval")
+                if interval == "60m":
+                    index = pd.date_range("2026-08-21 14:00", periods=20, freq="h")
+                    return pd.DataFrame({
+                        "Close": [100.0] * 20, "High": [101.0] * 20,
+                        "Low": [99.0] * 20, "Volume": [10.0] * 20,
+                    }, index=index)
+                index = pd.date_range("2026-08-21 14:00", periods=25, freq="min")
+                return pd.DataFrame({
+                    "Close": [100.0] * 25,
+                    "Volume": [10.0] * 24 + [20.0],
+                }, index=index)
+
+        class YFStub:
+            @staticmethod
+            def Ticker(_ticker):
+                return TickerStub()
+
+        async def capture_alert(text, ticker):
+            sent_alerts.append((ticker, text))
+
+        async def stop_after_cycle(_seconds):
+            raise asyncio.CancelledError()
+
+        bot.send_alert_with_buttons = capture_alert
+        with patch.dict("sys.modules", {"yfinance": YFStub()}), patch("main.asyncio.sleep", side_effect=stop_after_cycle):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(bot.support_monitor_loop())
+
+        self.assertEqual(len(sent_alerts), 1)
+        self.assertIn("(2/6)", sent_alerts[0][1])
+        self.assertIn("Abertura Virgem", sent_alerts[0][1])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
