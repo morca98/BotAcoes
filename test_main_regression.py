@@ -34,6 +34,7 @@ class MainRegressionTests(unittest.TestCase):
         bot = object.__new__(StockBot)
         bot.chat_id = "1"
         bot.app = FakeApp()
+        bot.combo_history = []
         return bot
 
     def test_stockbot_initialises_with_environment_configuration(self):
@@ -294,6 +295,58 @@ class MainRegressionTests(unittest.TestCase):
         self.assertIn("(5/6)", text)
         self.assertIn("EMA 70 + Fib 61.8% + Abertura Virgem", text)
         self.assertIn("Reversão 15m confirmada + Pico de volume + Divergência bullish + Liderança no pullback", text)
+
+
+class ComboCommandRegressionTests(unittest.TestCase):
+    def make_bot(self):
+        bot = object.__new__(StockBot)
+        bot.combo_history = []
+        return bot
+
+    def make_update(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        message = SimpleNamespace(reply_text=AsyncMock())
+        return SimpleNamespace(message=message), SimpleNamespace(args=[])
+
+    def test_combo_history_is_limited_to_ten_entries(self):
+        bot = self.make_bot()
+        for index in range(11):
+            bot.combo_history.append({"ticker": f"T{index}"})
+            if len(bot.combo_history) > 10:
+                bot.combo_history.pop(0)
+        self.assertEqual(len(bot.combo_history), 10)
+        self.assertEqual(bot.combo_history[0]["ticker"], "T1")
+        self.assertEqual(bot.combo_history[-1]["ticker"], "T10")
+
+    def test_cmd_combos_shows_latest_first_and_details(self):
+        from datetime import datetime
+        bot = self.make_bot()
+        bot.combo_history = [
+            {"ticker": "OLD", "time": datetime(2026, 9, 1, 10, 0), "breakout_price": 100.0,
+             "breakout_score": "2/4", "support_type": "EMA 200", "support_price": "98.00",
+             "support_score": 3, "confluences": "EMA 200 + Abertura Virgem"},
+            {"ticker": "NEW", "time": datetime(2026, 9, 2, 11, 30), "breakout_price": 110.0,
+             "breakout_score": "4/4", "support_type": "Zona (2 níveis)",
+             "support_price": "108.00 - 109.00", "support_score": 5,
+             "confluences": "EMA 70 + Golden Pocket"},
+        ]
+        update, context = self.make_update()
+        asyncio.run(bot.cmd_combos(update, context))
+        message = update.message.reply_text.call_args
+        text = message.args[0]
+        self.assertIn("ÚLTIMOS 10 SINAIS COMBO ENVIADOS", text)
+        self.assertLess(text.index("NEW"), text.index("OLD"))
+        self.assertIn("Zona (2 níveis)", text)
+        self.assertIn("EMA 70 + Golden Pocket", text)
+        self.assertEqual(message.kwargs["parse_mode"], "HTML")
+
+    def test_cmd_combos_reports_empty_history(self):
+        bot = self.make_bot()
+        update, context = self.make_update()
+        asyncio.run(bot.cmd_combos(update, context))
+        text = update.message.reply_text.call_args.args[0]
+        self.assertIn("nenhum sinal Combo", text)
 
 
 if __name__ == "__main__":

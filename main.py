@@ -50,6 +50,7 @@ class StockBot:
         self.last_support_check_time = datetime.now(LISBON_TZ)
         self.scan_lock = asyncio.Lock() # Evitar scans simultâneos
         self.signal_history = [] # Guardar os últimos 5 sinais
+        self.combo_history = [] # Guardar os últimos 10 Combos efetivamente enviados
         self.recent_supports = {} # Ticker -> {'time': datetime, 'type': str, 'price': float}
         self.recent_breakouts = {} # Ticker -> {'time': datetime, 'price': float}
         
@@ -508,6 +509,7 @@ class StockBot:
             "🤖 <b>Comandos Disponíveis:</b>\n"
             "🔹 /lista - Ver todos os ativos monitorizados\n"
             "🔹 /sinais - Ver os últimos 5 sinais disparados\n"
+            "🔹 /combos - Ver os últimos 10 sinais Combo enviados\n"
             "🔹 /analisar <code>TICKER</code> - Ver ficha técnica completa (ex: /analisar GE)\n"
             "🔹 /scan - Iniciar scan manual completo\n"
             "🔹 /watchlist - Ver a tua lista pessoal\n"
@@ -563,6 +565,32 @@ class StockBot:
                 f"━━━━━━━━━━━━━━━━━━━━\n"
             )
         
+        await update.message.reply_text(msg, parse_mode="HTML")
+
+    async def cmd_combos(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Mostra os últimos 10 sinais Combo efetivamente enviados pelo bot."""
+        if not self.combo_history:
+            await update.message.reply_text("Ainda não foi enviado nenhum sinal Combo nesta execução do bot.")
+            return
+
+        msg = "🎯 <b>ÚLTIMOS 10 SINAIS COMBO ENVIADOS</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        for combo in reversed(self.combo_history[-10:]):
+            time_value = combo.get("time")
+            time_str = time_value.strftime("%d/%m %H:%M") if hasattr(time_value, "strftime") else str(time_value)
+            confluences = combo.get("confluences") or "Sem confluências adicionais"
+            support = combo.get("support_type") or "Suporte"
+            support_price = combo.get("support_price", "—")
+            support_score = combo.get("support_score")
+            support_score_text = f" | Suporte: {support_score}/6" if support_score is not None else ""
+            msg += (
+                f"🕒 <code>{html.escape(time_str)}</code> | <b>{html.escape(str(combo.get('ticker', '—')))}</b>\n"
+                f"🚀 Rompimento: <code>${html.escape(str(combo.get('breakout_price', '—')))}</code> "
+                f"| Força: {html.escape(str(combo.get('breakout_score', '—')))}"
+                f"{support_score_text}\n"
+                f"🛡️ {html.escape(str(support))} (<code>${html.escape(str(support_price))}</code>)\n"
+                f"🔗 {html.escape(str(confluences))}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+            )
         await update.message.reply_text(msg, parse_mode="HTML")
 
     async def cmd_analisar(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -855,8 +883,25 @@ class StockBot:
                                 'price': round(current_price, 2)
                             }
 
-                            # Adicionar ao histórico (Tipo Combo ou Rompimento)
-                            sig_type = "🎯 Combo" if "CONFLUÊNCIA" in header else "🚀 Rompimento"
+                            # Adicionar ao histórico geral e, separadamente, ao histórico
+                            # dos Combos efetivamente enviados.
+                            is_combo = "CONFLUÊNCIA" in header
+                            sig_type = "🎯 Combo" if is_combo else "🚀 Rompimento"
+                            if is_combo:
+                                sup_info = self.recent_supports.get(ticker, {})
+                                support_confluences = sup_info.get('confluences', [])
+                                self.combo_history.append({
+                                    'ticker': ticker,
+                                    'time': now_time,
+                                    'breakout_price': round(current_price, 2),
+                                    'breakout_score': f"{b_score}/4",
+                                    'support_type': sup_info.get('type', 'Suporte'),
+                                    'support_price': sup_info.get('price', '—'),
+                                    'support_score': sup_info.get('strength_score'),
+                                    'confluences': ' + '.join(str(item) for item in support_confluences) if support_confluences else 'Sem confluências adicionais',
+                                })
+                                if len(self.combo_history) > 10:
+                                    self.combo_history.pop(0)
                             self.signal_history.append({
                                 'ticker': ticker, 'type': sig_type, 
                                 'score_bar': strength_bar, 'price': round(current_price, 2),
@@ -925,6 +970,7 @@ class StockBot:
         self.app.add_handler(CommandHandler("watchlist", self.cmd_watchlist))
         self.app.add_handler(CommandHandler("lista", self.cmd_lista))
         self.app.add_handler(CommandHandler("sinais", self.cmd_sinais))
+        self.app.add_handler(CommandHandler("combos", self.cmd_combos))
         self.app.add_handler(CommandHandler("analisar", self.cmd_analisar))
         self.app.post_init = self.post_init
         
