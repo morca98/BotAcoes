@@ -104,7 +104,7 @@ class MainRegressionTests(unittest.TestCase):
 
     def test_technical_confluence_can_alert_without_virgin_open(self):
         bot = self.make_bot()
-        bot.active_signals = {"TEST": {"div_bullish": False, "rs_sector": 1.1, "rsi_daily": 40.0}}
+        bot.active_signals = {"TEST": {"div_bullish": True, "rs_sector": 1.1, "rsi_daily": 40.0}}
         bot.notified_touches = set()
         bot.recent_supports = {}
         bot.signal_history = []
@@ -167,7 +167,7 @@ class MainRegressionTests(unittest.TestCase):
 
     def test_virgin_support_adds_one_point_to_strength(self):
         bot = self.make_bot()
-        bot.active_signals = {"TEST": {"div_bullish": False, "rs_sector": 1.1, "rsi_daily": 40.0}}
+        bot.active_signals = {"TEST": {"div_bullish": True, "rs_sector": 1.1, "rsi_daily": 40.0}}
         bot.notified_touches = set()
         bot.recent_supports = {}
         bot.signal_history = []
@@ -223,7 +223,7 @@ class MainRegressionTests(unittest.TestCase):
                 asyncio.run(bot.support_monitor_loop())
 
         self.assertEqual(len(sent_alerts), 1)
-        self.assertIn("(2/6)", sent_alerts[0][1])
+        self.assertIn("(3/6)", sent_alerts[0][1])
         self.assertIn("Abertura Virgem", sent_alerts[0][1])
 
 

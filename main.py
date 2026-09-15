@@ -731,8 +731,16 @@ class StockBot:
                                          f"{conf_msg}\n"
                                          f"   RS/Setor: <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
                                 
-                                if strength_score <= 1:
-                                    logger.info(f"Alerta ignorado para {ticker}: Força 1/6 (abaixo do limiar mínimo)")
+                                min_support_strength = getattr(
+                                    getattr(self, "config", None),
+                                    "MIN_SUPPORT_ALERT_STRENGTH",
+                                    3,
+                                )
+                                if strength_score < min_support_strength:
+                                    logger.info(
+                                        f"Alerta ignorado para {ticker}: Força {strength_score}/6 "
+                                        f"abaixo do limiar mínimo {min_support_strength}/6"
+                                    )
                                     continue
 
                                 now_time = datetime.now(LISBON_TZ)
@@ -872,7 +880,12 @@ class StockBot:
                                  f"🎯 <b>Próximo Alvo:</b> <code>${details['target']}</code> (Resistência)\n"
                                  f"🏢 <b>Setor:</b> RS <code>{s['rs_sector']}</code> | RSI D: <code>{s['rsi_daily']}</code>")
                         
-                        if b_score > 1:
+                        min_breakout_strength = getattr(
+                            getattr(self, "config", None),
+                            "MIN_BREAKOUT_ALERT_STRENGTH",
+                            3,
+                        )
+                        if b_score >= min_breakout_strength:
                             await self.send_alert_with_buttons(alert, ticker)
                             logger.info(f"Breakout enviado para {ticker} com força {b_score}/4")
                             
@@ -909,7 +922,10 @@ class StockBot:
                             })
                             if len(self.signal_history) > 5: self.signal_history.pop(0)
                         else:
-                            logger.info(f"Breakout ignorado para {ticker}: Força 1/4")
+                            logger.info(
+                                f"Breakout ignorado para {ticker}: Força {b_score}/4 "
+                                f"abaixo do limiar mínimo {min_breakout_strength}/4"
+                            )
                         self.notified_breakouts.add(ticker)
                         await asyncio.sleep(0.5)
             except Exception as e:

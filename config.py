@@ -34,6 +34,10 @@ class Config:
     MIN_ANNUAL_VOL = 0.4
     MAX_SUPPORT_DISTANCE_PCT = 10.0
 
+    # Força mínima para enviar alertas, evitando sinais fracos.
+    MIN_SUPPORT_ALERT_STRENGTH = 3
+    MIN_BREAKOUT_ALERT_STRENGTH = 3
+
     # Proteção do fornecedor de dados: mantém o universo amplo, mas analisa os 500 mais líquidos.
     MAX_SCAN_ASSETS = 500
     LIQUIDITY_CHUNK_SIZE = 25
